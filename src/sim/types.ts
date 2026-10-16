@@ -82,6 +82,7 @@ export interface SimVehicle {
   exitTimeSec: number | null;
   totalWaitTimeSec: number;
   dwellRemainingSec: number; // For drop-off dwell
+  dwellDone?: boolean; // true once the drop-off dwell has completed
   entranceId: string;
   exitId: string;
   yieldingToLeader?: SimVehicle | null;

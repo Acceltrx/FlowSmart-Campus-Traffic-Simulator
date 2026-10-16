@@ -698,43 +698,66 @@ export function createSimulation(
         continue;
       }
 
-      // Check drop-off arrival & dwell handling
+      // Check drop-off stop: route-based stop line at the drop-off node.
+      // The vehicle brakes toward the stop line (see 4c/4e) and starts dwelling when it
+      // reaches it, or when it is queued right behind a vehicle that is already dwelling.
+      // A full bay (2 dwellers) makes it wait instead of driving past.
+      let dropStopDistM = Infinity;
       const dropMarker = v.usesDropoff && v.dropoffId
         ? dropoffMarkers.find((m) => m.id === v.dropoffId)
         : undefined;
-      if (dropMarker) {
-        const distToDropMeters = distance(v.position, dropMarker.position) * metersPerUnit;
-        const isNearDropoff = distToDropMeters <= 5.0 || distance(v.position, dropMarker.position) <= 25;
+      if (dropMarker && !v.dwellDone) {
+        const dwellers = dropoffDwellers.get(dropMarker.id);
 
-        if (isNearDropoff && !v.id.includes('-dwelled')) {
-          const dwellers = dropoffDwellers.get(dropMarker.id);
-          const currentDwellingCount = dwellers ? dwellers.size : 0;
-
+        if (v.dwellRemainingSec > 0) {
+          // Currently dwelling
+          v.dwellRemainingSec = Math.max(0, v.dwellRemainingSec - dtSeconds);
           if (v.dwellRemainingSec > 0) {
-            // Currently dwelling
-            v.dwellRemainingSec = Math.max(0, v.dwellRemainingSec - dtSeconds);
             v.speedMS = 0;
             v.speedPxPerSec = 0;
             v.state = 'waiting';
-
-            if (v.dwellRemainingSec <= 0) {
-              v.id = `${v.id}-dwelled`;
-              dwellers?.delete(v.id);
-              v.state = 'moving';
-            }
             continue;
-          } else if (currentDwellingCount < 2) {
-            const leaderAhead = findLeader(v, vehiclesByEdge, VEHICLE_LENGTH_M);
-            const canStartDwell = !leaderAhead || leaderAhead.netGapMeters <= STANDSTILL_GAP_M + 0.5;
+          }
+          v.dwellDone = true;
+          dwellers?.delete(v.id);
+          v.state = 'moving';
+        } else {
+          const dropNodeId = graph.dropoffNodeMap.get(dropMarker.id);
+          if (dropNodeId) {
+            // Route distance from the vehicle front to the stop line (end of the edge entering the drop-off node)
+            let distToStop = 0;
+            let foundStop = false;
+            for (let k = v.currentEdgeIndex; k < v.routeEdges.length; k++) {
+              const e = v.routeEdges[k];
+              distToStop +=
+                k === v.currentEdgeIndex
+                  ? Math.max(0, e.lengthMeters - v.distanceAlongCurrentEdgeMeters)
+                  : e.lengthMeters;
+              if (e.toNodeId === dropNodeId) {
+                foundStop = true;
+                break;
+              }
+            }
 
-            if (canStartDwell) {
-              // Uniform dwell time from 20 to 60 s
-              v.dwellRemainingSec = 20 + rng() * 40;
-              v.speedMS = 0;
-              v.speedPxPerSec = 0;
-              v.state = 'waiting';
-              dwellers?.add(v.id);
-              continue;
+            if (foundStop) {
+              const ld = findLeader(v, vehiclesByEdge, VEHICLE_LENGTH_M);
+              const queuedBehindDweller =
+                !!ld &&
+                ld.leader.state === 'waiting' &&
+                ld.leader.dwellRemainingSec > 0 &&
+                ld.netGapMeters <= STANDSTILL_GAP_M + 0.5;
+              const atStopLine = distToStop <= 0.5;
+
+              if ((atStopLine || queuedBehindDweller) && (dwellers ? dwellers.size : 0) < 2) {
+                // Uniform dwell time from 20 to 60 s
+                v.dwellRemainingSec = 20 + rng() * 40;
+                v.speedMS = 0;
+                v.speedPxPerSec = 0;
+                v.state = 'waiting';
+                dwellers?.add(v.id);
+                continue;
+              }
+              dropStopDistM = distToStop;
             }
           }
         }
@@ -834,6 +857,12 @@ export function createSimulation(
         targetSpeed = Math.max(0, Math.min(v0, v.speedMS + acc * dtSeconds));
       }
 
+      if (Number.isFinite(dropStopDistM)) {
+        // Brake smoothly toward the drop-off stop line
+        const stopCap = Math.sqrt(2 * b * Math.max(0, dropStopDistM - 0.2));
+        targetSpeed = Math.min(targetSpeed, stopCap);
+      }
+
       v.speedMS = Math.max(0, targetSpeed);
       v.speedPxPerSec = v.speedMS * pixelsPerMeter;
 
@@ -858,6 +887,10 @@ export function createSimulation(
           stepDistanceMeters,
           Math.max(0, distToNodeMeters - EFFECTIVE_SPACE_M)
         );
+      }
+      if (Number.isFinite(dropStopDistM)) {
+        // Never overshoot the drop-off stop line
+        stepDistanceMeters = Math.min(stepDistanceMeters, dropStopDistM);
       }
 
       if (leader && stepDistanceMeters === 0 && netGapMeters <= STANDSTILL_GAP_M) {
