@@ -495,78 +495,12 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
     ctx.textBaseline = 'top';
     ctx.fillText(`1 cell = ${currentCellMeters} m`, 8, 8);
 
-    // 2. Reference image or base architectural buildings
+    // 2. Reference image (optional)
     if (referenceImageRef.current) {
       ctx.save();
       ctx.globalAlpha = 0.35;
       ctx.drawImage(referenceImageRef.current, 0, 0, mapWidth, mapHeight);
       ctx.restore();
-    } else {
-      // Campus grounds background
-      ctx.fillStyle = '#EEF5EE';
-      drawRoundRect(ctx, 70, 55, mapWidth - 140, mapHeight - 110, 14);
-      ctx.fill();
-
-      // Quad lawn polygon
-      ctx.fillStyle = '#E3EDE3';
-      ctx.beginPath();
-      ctx.moveTo(320, 165);
-      ctx.lineTo(640, 165);
-      ctx.lineTo(615, 310);
-      ctx.lineTo(345, 310);
-      ctx.closePath();
-      ctx.fill();
-
-      // Quad center circle
-      ctx.fillStyle = '#D6E8D6';
-      ctx.beginPath();
-      ctx.arc(480, 235, 30, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#3D6B42';
-      ctx.font = '600 12px Inter, system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('Quad lawn', 480, 235);
-
-      // Building 1: Main academic hall
-      ctx.fillStyle = '#FFFFFF';
-      ctx.strokeStyle = '#CBD5E1';
-      ctx.lineWidth = 1.2;
-      drawRoundRect(ctx, 370, 80, 220, 54, 8);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = '#111C2D';
-      ctx.font = '600 12px Inter, system-ui, sans-serif';
-      ctx.fillText('Main Academic Hall', 480, 107);
-
-      // Building 2: Technical & vocational complex
-      ctx.fillStyle = '#FFFFFF';
-      drawRoundRect(ctx, 370, 340, 220, 60, 8);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = '#111C2D';
-      ctx.fillText('Technical & Vocational Complex', 480, 370);
-
-      // Building 3: Gymnasium & auditorium
-      ctx.fillStyle = '#FFFFFF';
-      drawRoundRect(ctx, 120, 150, 140, 180, 8);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = '#111C2D';
-      ctx.fillText('Gymnasium & Auditorium', 190, 240);
-
-      // Building 4: Elementary wing
-      ctx.fillStyle = '#FFFFFF';
-      drawRoundRect(ctx, 670, 150, 140, 180, 8);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = '#111C2D';
-      ctx.fillText('Elementary Wing', 740, 240);
     }
 
     // 3. Roads Network Layer (exact visual styling from Map setup)
