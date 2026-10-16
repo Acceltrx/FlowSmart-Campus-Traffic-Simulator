@@ -698,7 +698,7 @@ export function createSimulation(
         continue;
       }
 
-      // Check drop-off stop: route-based stop line at the drop-off node.
+      // Check drop-off stop: stop point on the drop-off marker (vehicle center on top of the zone).
       // The vehicle brakes toward the stop line (see 4c/4e) and starts dwelling when it
       // reaches it, or when it is queued right behind a vehicle that is already dwelling.
       // A full bay (2 dwellers) makes it wait instead of driving past.
@@ -724,18 +724,61 @@ export function createSimulation(
         } else {
           const dropNodeId = graph.dropoffNodeMap.get(dropMarker.id);
           if (dropNodeId) {
-            // Route distance from the vehicle front to the stop line (end of the edge entering the drop-off node)
+            // Stop point: the vehicle CENTER should sit on the drop-off marker. Project the marker onto the
+            // route around the drop-off node (the edge entering it and the one leaving it) and measure the
+            // route distance from the vehicle front to the point where the front is half a car length past it.
             let distToStop = 0;
             let foundStop = false;
-            for (let k = v.currentEdgeIndex; k < v.routeEdges.length; k++) {
-              const e = v.routeEdges[k];
-              distToStop +=
-                k === v.currentEdgeIndex
-                  ? Math.max(0, e.lengthMeters - v.distanceAlongCurrentEdgeMeters)
-                  : e.lengthMeters;
-              if (e.toNodeId === dropNodeId) {
-                foundStop = true;
+            let nodeEdgeIdx = -1;
+            for (let k = 0; k < v.routeEdges.length; k++) {
+              if (v.routeEdges[k].toNodeId === dropNodeId) {
+                nodeEdgeIdx = k;
                 break;
+              }
+            }
+            if (nodeEdgeIdx >= 0 && v.currentEdgeIndex <= nodeEdgeIdx + 1) {
+              const lastK = Math.min(v.routeEdges.length - 1, nodeEdgeIdx + 1);
+              let acc = -v.distanceAlongCurrentEdgeMeters; // route distance from front to start of edge k
+              let bestPerpPx = Infinity;
+              let bestAlongM = 0;
+              for (let k = v.currentEdgeIndex; k <= lastK; k++) {
+                const e = v.routeEdges[k];
+                if (k >= nodeEdgeIdx) {
+                  let segStartM = 0;
+                  for (let j = 0; j < e.points.length - 1; j++) {
+                    const p1 = e.points[j];
+                    const p2 = e.points[j + 1];
+                    const dx = p2.x - p1.x;
+                    const dy = p2.y - p1.y;
+                    const segLenPx = Math.hypot(dx, dy);
+                    const t =
+                      segLenPx > 0.001
+                        ? Math.min(
+                            1,
+                            Math.max(
+                              0,
+                              ((dropMarker.position.x - p1.x) * dx + (dropMarker.position.y - p1.y) * dy) /
+                                (segLenPx * segLenPx)
+                            )
+                          )
+                        : 0;
+                    const perpPx = Math.hypot(
+                      dropMarker.position.x - (p1.x + dx * t),
+                      dropMarker.position.y - (p1.y + dy * t)
+                    );
+                    if (perpPx < bestPerpPx - 1e-6) {
+                      bestPerpPx = perpPx;
+                      bestAlongM = acc + segStartM + t * segLenPx * metersPerUnit;
+                    }
+                    segStartM += segLenPx * metersPerUnit;
+                  }
+                }
+                acc += e.lengthMeters;
+              }
+              if (bestPerpPx < Infinity) {
+                // Front target = marker point + half a car length, but never beyond the end of the route
+                distToStop = Math.max(0, Math.min(bestAlongM + VEHICLE_LENGTH_M / 2, acc));
+                foundStop = true;
               }
             }
 
@@ -745,7 +788,11 @@ export function createSimulation(
                 !!ld &&
                 ld.leader.state === 'waiting' &&
                 ld.leader.dwellRemainingSec > 0 &&
-                ld.netGapMeters <= STANDSTILL_GAP_M + 0.5;
+                ld.netGapMeters <= STANDSTILL_GAP_M + 0.5 &&
+                // Only the single slot right behind the marker may dwell queued; farther back waits its turn
+                Math.hypot(v.position.x - dropMarker.position.x, v.position.y - dropMarker.position.y) *
+                  metersPerUnit <=
+                  VEHICLE_LENGTH_M + STANDSTILL_GAP_M + 1.5;
               const atStopLine = distToStop <= 0.5;
 
               if ((atStopLine || queuedBehindDweller) && (dwellers ? dwellers.size : 0) < 2) {
