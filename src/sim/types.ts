@@ -55,6 +55,7 @@ export interface Router {
     routeEdges: GraphEdge[];
     routePoints: Point[];
     targetExitId: string;
+    dropoffId?: string;
   } | null;
   allowedClasses?: (entranceId: string) => { sticker: boolean; nonSticker: boolean };
 }
@@ -63,6 +64,7 @@ export interface SimVehicle {
   id: string;
   isSticker: boolean;
   usesDropoff: boolean;
+  dropoffId?: string; // drop-off marker this vehicle's route stops at (undefined for direct routes)
   position: Point;
   headingRad: number; // direction angle
   prevPosition: Point;

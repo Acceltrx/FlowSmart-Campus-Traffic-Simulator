@@ -557,6 +557,7 @@ export class DrawnPathRouter implements Router {
     routeEdges: GraphEdge[];
     routePoints: Point[];
     targetExitId: string;
+    dropoffId?: string;
   } | null {
     const entranceData = this.routesByEntrance.get(entranceMarkerId);
     if (!entranceData) return null;
@@ -602,6 +603,7 @@ export class DrawnPathRouter implements Router {
       routeEdges: selected.edges,
       routePoints: selected.points,
       targetExitId: selected.exitId,
+      dropoffId: selected.dropoffId,
     };
   }
 
@@ -666,6 +668,7 @@ export function planFullVehicleRoute(
   routeEdges: GraphEdge[];
   routePoints: Point[];
   targetExitId: string;
+  dropoffId?: string;
 } | null {
   if (!mapConfig) return null;
   const router = new DrawnPathRouter(mapConfig, graph);

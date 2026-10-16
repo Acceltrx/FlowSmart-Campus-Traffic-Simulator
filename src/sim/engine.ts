@@ -631,6 +631,7 @@ export function createSimulation(
               id: `veh-${vehicleIdCounter}`,
               isSticker,
               usesDropoff,
+              dropoffId: planned.dropoffId,
               position: point,
               headingRad,
               prevPosition: { ...point },
@@ -698,8 +699,10 @@ export function createSimulation(
       }
 
       // Check drop-off arrival & dwell handling
-      if (v.usesDropoff && dropoffMarkers.length > 0) {
-        const dropMarker = dropoffMarkers[0];
+      const dropMarker = v.usesDropoff && v.dropoffId
+        ? dropoffMarkers.find((m) => m.id === v.dropoffId)
+        : undefined;
+      if (dropMarker) {
         const distToDropMeters = distance(v.position, dropMarker.position) * metersPerUnit;
         const isNearDropoff = distToDropMeters <= 5.0 || distance(v.position, dropMarker.position) <= 25;
 
