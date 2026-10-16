@@ -50,11 +50,44 @@ export const DEFAULT_SETTINGS: SimulationSettings = {
   simDurationMin: 30,
   layoutName: 'Layout A',
   dropoffShare: 1.0,
+  dropoffPatienceSec: 30,
+  dropoffPatienceSpreadSec: 20,
+  dropoffDwellMinSec: 20,
+  dropoffDwellMaxSec: 60,
   alertWaitThresholdSec: 120,
   alertUtilThresholdPct: 80,
   alertUtilDurationSec: 30,
   alertReturnUtilPct: 60,
 };
+
+function clampOrDefault(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * Clamps the drop-off settings to their allowed ranges. Missing or non-numeric values get the defaults.
+ * dropoffShare 0 to 1, patience 5 to 300 s, spread 0 to 120 s, dwell min/max 5 to 300 s (max is raised to min if lower).
+ * Returns a new object; other settings are left untouched.
+ */
+export function sanitizeDropoffSettings<T extends Partial<SimulationSettings>>(settings: T): T {
+  const dwellMin = clampOrDefault(settings.dropoffDwellMinSec, 5, 300, DEFAULT_SETTINGS.dropoffDwellMinSec!);
+  const dwellMax = clampOrDefault(settings.dropoffDwellMaxSec, 5, 300, DEFAULT_SETTINGS.dropoffDwellMaxSec!);
+  return {
+    ...settings,
+    dropoffShare: clampOrDefault(settings.dropoffShare, 0, 1, DEFAULT_SETTINGS.dropoffShare!),
+    dropoffPatienceSec: clampOrDefault(settings.dropoffPatienceSec, 5, 300, DEFAULT_SETTINGS.dropoffPatienceSec!),
+    dropoffPatienceSpreadSec: clampOrDefault(
+      settings.dropoffPatienceSpreadSec,
+      0,
+      120,
+      DEFAULT_SETTINGS.dropoffPatienceSpreadSec!
+    ),
+    dropoffDwellMinSec: dwellMin,
+    dropoffDwellMaxSec: Math.max(dwellMin, dwellMax),
+  };
+}
 
 // Initial default campus map specification using the 14-segment network
 export const DEFAULT_MAP: MapConfig = SAMPLE_MAP;
@@ -146,6 +179,7 @@ function getInitialState(): State {
         }
         s.defaultSpeedLimit = clamped;
       }
+      rawMap.settings = sanitizeDropoffSettings(s as Partial<SimulationSettings>);
     }
 
     // Migrate referenceImageName from sourceFileName if needed
@@ -190,7 +224,7 @@ function getInitialState(): State {
       }
       rawSettings.defaultSpeedLimit = clamped;
     }
-    settings = { ...DEFAULT_SETTINGS, ...rawSettings } as SimulationSettings;
+    settings = sanitizeDropoffSettings({ ...DEFAULT_SETTINGS, ...rawSettings } as SimulationSettings);
   } else {
     settings = DEFAULT_SETTINGS;
   }
@@ -208,6 +242,7 @@ function getInitialState(): State {
   settings.defaultSpeedLimit = clampSpeedKmH(settings.defaultSpeedLimit);
   if (map.settings) {
     map.settings.defaultSpeedLimit = clampSpeedKmH(map.settings.defaultSpeedLimit);
+    map.settings = sanitizeDropoffSettings(map.settings);
   }
 
   registerCurrentMap(map);
@@ -244,7 +279,7 @@ function trafficReducer(state: State, action: Action): State {
       if (sanitized.defaultSpeedLimit !== undefined) {
         sanitized.defaultSpeedLimit = clampSpeedKmH(sanitized.defaultSpeedLimit);
       }
-      const newSettings = { ...state.settings, ...sanitized };
+      const newSettings = sanitizeDropoffSettings({ ...state.settings, ...sanitized });
       const updatedMap = {
         ...state.map,
         settings: {
@@ -277,8 +312,9 @@ function trafficReducer(state: State, action: Action): State {
         defaultSpeedLimit: clampSpeedKmH(cleanMap.settings?.defaultSpeedLimit ?? state.settings.defaultSpeedLimit),
         metersPerUnit: newMeters,
       };
-      cleanMap.settings = syncedSettings;
-      return { ...state, map: cleanMap, settings: syncedSettings };
+      const finalSettings = sanitizeDropoffSettings(syncedSettings);
+      cleanMap.settings = finalSettings;
+      return { ...state, map: cleanMap, settings: finalSettings };
     }
 
     case 'SET_REFERENCE_IMAGE_URL':

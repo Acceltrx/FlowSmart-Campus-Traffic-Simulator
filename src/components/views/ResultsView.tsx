@@ -23,6 +23,33 @@ import { useSimulation } from '../../context/SimulationContext';
 import { generateActionableInsights, ActionableInsight } from '../../sim/insights';
 import { RunLogEntry, SimulationResult, BottleneckRank } from '../../types/traffic';
 
+// Drop-off statistics for a run. Fields are undefined on runs saved before they existed.
+interface DropStats {
+  total: number | undefined;
+  early: number | undefined;
+  avgWait: number | undefined;
+}
+
+function getDropStats(entry: RunLogEntry | undefined, fallback?: SimulationResult): DropStats {
+  const src = entry ?? undefined;
+  return {
+    total: src ? src.totalDropoffs ?? src.result?.totalDropoffs : fallback?.totalDropoffs,
+    early: src ? src.earlyDropoffs ?? src.result?.earlyDropoffs : fallback?.earlyDropoffs,
+    avgWait: src ? src.avgDropWaitSec ?? src.result?.avgDropWaitSec : fallback?.avgDropWaitSec,
+  };
+}
+
+// "N of M (P%)", "0 of 0" when there were no drop-offs, "n/a" for old runs
+function formatEarlyDropoffs(d: DropStats): string {
+  if (d.early === undefined || d.total === undefined) return 'n/a';
+  if (d.total === 0) return '0 of 0';
+  return `${d.early} of ${d.total} (${Math.round((d.early / d.total) * 100)}%)`;
+}
+
+function formatDropWait(d: DropStats): string {
+  return d.avgWait === undefined ? 'n/a' : `${d.avgWait.toFixed(1)} s`;
+}
+
 export const ResultsView: React.FC = () => {
   const { state: storeState, setActiveTab } = useTrafficStore();
   const { lastResult } = useSimulation();
@@ -98,6 +125,7 @@ export const ResultsView: React.FC = () => {
   const flowEfficiency = activeEntry?.flowEfficiency ?? result.flowEfficiencyPct ?? 0;
   const runNumber = activeEntry?.runNumber ?? result.runNumber ?? 1;
   const layoutName = activeEntry?.layoutName || result.layoutName || storeState.settings.layoutName || 'Layout A';
+  const dropStats = getDropStats(activeEntry ?? undefined, result);
 
   // PRD 3.3.2 Metric card badge states
   // 1. Total Throughput: Optimal (>=1200), Moderate (900-1199), Critical (<900)
@@ -169,6 +197,10 @@ export const ResultsView: React.FC = () => {
       'Max queue (veh)',
       'Flow efficiency (%)',
       'Per-segment max queue',
+      'total_dropoffs',
+      'early_dropoffs',
+      'early_dropoff_pct',
+      'avg_drop_wait_sec',
     ];
 
     const rows = tableRows.map((r) => {
@@ -185,6 +217,12 @@ export const ResultsView: React.FC = () => {
           .join('; ') ||
         'None';
 
+      const d = getDropStats(r);
+      const earlyPct =
+        d.early !== undefined && d.total !== undefined && d.total > 0
+          ? Math.round((d.early / d.total) * 100)
+          : '';
+
       return [
         `"${r.layoutName}"`,
         r.runNumber,
@@ -197,6 +235,10 @@ export const ResultsView: React.FC = () => {
         r.maxQueue,
         `${r.flowEfficiency}%`,
         `"${segmentQueueStr}"`,
+        d.total ?? '',
+        d.early ?? '',
+        earlyPct,
+        d.avgWait !== undefined ? d.avgWait.toFixed(1) : '',
       ];
     });
 
@@ -428,6 +470,27 @@ export const ResultsView: React.FC = () => {
           </div>
         </div>
 
+        {/* 2b. Drop-off cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+          <div className="bg-white border border-[#E2E6EF] rounded-lg p-4 flex flex-col justify-between min-w-0">
+            <span className="text-[12px] text-[#6B7A99] mb-1">Early drop-offs</span>
+            <div className="text-[22px] font-medium text-[#111C2D] my-1 truncate tabular-nums">
+              {formatEarlyDropoffs(dropStats)}
+            </div>
+            <div className="text-[12px] text-[#6B7A99]">
+              Cars that gave up waiting and dropped off away from the zone.
+            </div>
+          </div>
+
+          <div className="bg-white border border-[#E2E6EF] rounded-lg p-4 flex flex-col justify-between min-w-0">
+            <span className="text-[12px] text-[#6B7A99] mb-1">Average wait at drop-off</span>
+            <div className="text-[22px] font-medium text-[#111C2D] my-1 truncate tabular-nums">
+              {formatDropWait(dropStats)}
+            </div>
+            <div className="text-[12px] text-[#6B7A99]">Time held near the zone before dropping off.</div>
+          </div>
+        </div>
+
         {/* 3. Bottleneck Analysis Panel (Consistent 16px padding, clean border) */}
         <div className="bg-white border border-[#E2E6EF] rounded-lg p-4 flex flex-col">
           <div className="flex items-baseline justify-between mb-3">
@@ -541,13 +604,15 @@ export const ResultsView: React.FC = () => {
                   <th className="py-2.5 px-3 font-medium">Avg wait</th>
                   <th className="py-2.5 px-3 font-medium">Avg transit</th>
                   <th className="py-2.5 px-3 font-medium">Max queue</th>
-                  <th className="py-2.5 px-3 font-medium rounded-r-lg">Flow efficiency</th>
+                  <th className="py-2.5 px-3 font-medium">Flow efficiency</th>
+                  <th className="py-2.5 px-3 font-medium">Early drop-offs</th>
+                  <th className="py-2.5 px-3 font-medium rounded-r-lg">Avg drop-off wait</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E2E6EF]/60">
                 {tableRows.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-6 text-center text-[#6B7A99] text-[12px]">
+                    <td colSpan={11} className="py-6 text-center text-[#6B7A99] text-[12px]">
                       No previous evaluation runs logged.
                     </td>
                   </tr>
@@ -555,6 +620,7 @@ export const ResultsView: React.FC = () => {
                   tableRows.map((log, index) => {
                     const isCurrent = (activeEntry?.runId || tableRows[0].runId) === log.runId;
                     const spawnSummary = Object.values(log.spawnRates || {}).join(' / ');
+                    const logDrop = getDropStats(log);
                     return (
                       <tr
                         key={log.runId || index}
@@ -608,6 +674,8 @@ export const ResultsView: React.FC = () => {
                             {log.flowEfficiency}%
                           </span>
                         </td>
+                        <td className="py-3 px-3 text-[#111C2D] whitespace-nowrap">{formatEarlyDropoffs(logDrop)}</td>
+                        <td className="py-3 px-3 text-[#111C2D] whitespace-nowrap">{formatDropWait(logDrop)}</td>
                       </tr>
                     );
                   })

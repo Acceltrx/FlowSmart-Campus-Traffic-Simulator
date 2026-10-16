@@ -271,21 +271,28 @@ export function createSimulation(
   const durationSeconds = (settings.simDurationMin || 30) * 60;
   const maxSimTimeWithGrace = durationSeconds + 10 * 60; // 10 extra minutes for campus to clear
   const stickerShare = settings.stickerShare !== undefined ? settings.stickerShare : 0.7;
-  const dropoffShare =
-    (settings as unknown as { dropoffShare?: number }).dropoffShare !== undefined
-      ? (settings as unknown as { dropoffShare?: number }).dropoffShare!
-      : 1.0;
+  const dropoffShare = settings.dropoffShare ?? 1.0;
 
   // Drop-off patience: a vehicle held up near the drop-off zone (bay full / cars ahead dwelling) gives up
   // waiting after DROPOFF_PATIENCE_SEC (+ a random per-vehicle spread) and drops off where it is.
-  // Tunable via settings.dropoffPatienceSec / settings.dropoffPatienceSpreadSec.
-  const patienceCfg = settings as unknown as { dropoffPatienceSec?: number; dropoffPatienceSpreadSec?: number };
-  const DROPOFF_PATIENCE_SEC = patienceCfg.dropoffPatienceSec ?? 30;
-  const DROPOFF_PATIENCE_SPREAD_SEC = patienceCfg.dropoffPatienceSpreadSec ?? 20;
+  const DROPOFF_PATIENCE_SEC = settings.dropoffPatienceSec ?? 30;
+  const DROPOFF_PATIENCE_SPREAD_SEC = settings.dropoffPatienceSpreadSec ?? 20;
+  // Drop-off dwell time is uniform between min and max
+  const DROPOFF_DWELL_MIN_SEC = settings.dropoffDwellMinSec ?? 20;
+  const DROPOFF_DWELL_MAX_SEC = Math.max(DROPOFF_DWELL_MIN_SEC, settings.dropoffDwellMaxSec ?? 60);
   const DROPOFF_PATIENCE_RANGE_M = 40; // only count waiting this close to the zone
 
   let simTime = 0;
   let vehicleIdCounter = 0;
+  // Drop-off statistics: counted once per vehicle, at the moment its drop-off starts
+  let totalDropoffs = 0;
+  let earlyDropoffs = 0;
+  let dropWaitSumSec = 0;
+  const recordDropoffStart = (veh: SimVehicle, early: boolean) => {
+    totalDropoffs++;
+    if (early) earlyDropoffs++;
+    dropWaitSumSec += veh.dropWaitSec ?? 0;
+  };
   let spawnedStickerCount = 0;
   let spawnedNonStickerCount = 0;
   let isRunCompleted = false;
@@ -804,8 +811,9 @@ export function createSimulation(
               const atStopLine = distToStop <= 0.5;
 
               if ((atStopLine || queuedBehindDweller) && (dwellers ? dwellers.size : 0) < 2) {
-                // Uniform dwell time from 20 to 60 s
-                v.dwellRemainingSec = 20 + rng() * 40;
+                // Uniform dwell time between the configured min and max (default 20 to 60 s)
+                v.dwellRemainingSec = DROPOFF_DWELL_MIN_SEC + rng() * (DROPOFF_DWELL_MAX_SEC - DROPOFF_DWELL_MIN_SEC);
+                recordDropoffStart(v, false);
                 v.speedMS = 0;
                 v.speedPxPerSec = 0;
                 v.state = 'waiting';
@@ -820,8 +828,9 @@ export function createSimulation(
                 }
                 v.dropWaitSec = (v.dropWaitSec ?? 0) + dtSeconds;
                 if (v.dropWaitSec >= v.patienceSec) {
-                  v.dwellRemainingSec = 20 + rng() * 40;
+                  v.dwellRemainingSec = DROPOFF_DWELL_MIN_SEC + rng() * (DROPOFF_DWELL_MAX_SEC - DROPOFF_DWELL_MIN_SEC);
                   v.droppedOffEarly = true;
+                  recordDropoffStart(v, true);
                   v.speedMS = 0;
                   v.speedPxPerSec = 0;
                   v.state = 'waiting';
@@ -1317,6 +1326,9 @@ export function createSimulation(
       })),
       spawnedSticker: spawnedStickerCount,
       spawnedNonSticker: spawnedNonStickerCount,
+      totalDropoffs,
+      earlyDropoffs,
+      avgDropWaitSec: totalDropoffs > 0 ? Math.round((dropWaitSumSec / totalDropoffs) * 10) / 10 : 0,
     };
   }
 

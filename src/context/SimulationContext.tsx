@@ -295,6 +295,9 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
         flowEfficiency: result.flowEfficiencyPct || 0,
         spawnedSticker: result.spawnedSticker,
         spawnedNonSticker: result.spawnedNonSticker,
+        totalDropoffs: result.totalDropoffs,
+        earlyDropoffs: result.earlyDropoffs,
+        avgDropWaitSec: result.avgDropWaitSec,
         result,
       };
 

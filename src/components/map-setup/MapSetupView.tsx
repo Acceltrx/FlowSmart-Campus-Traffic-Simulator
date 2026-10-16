@@ -57,9 +57,10 @@ export const CarPersonIcon: React.FC<{ size?: number; className?: string }> = ({
   </svg>
 );
 
-import { useTrafficStore } from '../../context/TrafficStoreContext';
+import { useTrafficStore, sanitizeDropoffSettings } from '../../context/TrafficStoreContext';
 import { useSimulation } from '../../context/SimulationContext';
 import { VehicleMixControl } from '../common/VehicleMixControl';
+import { DropoffBehaviorControl } from '../common/DropoffBehaviorControl';
 import {
   RoadSegment,
   ZoneMarker,
@@ -1545,6 +1546,9 @@ export const MapSetupView: React.FC = () => {
           setSpeedAdjustedNotice(true);
         }
 
+        // Clamp drop-off settings; old files without them get the defaults
+        imported.settings = sanitizeDropoffSettings(imported.settings ?? {});
+
         if (imported.metersPerPixel !== undefined) {
           if (!imported.settings) imported.settings = {};
           if (imported.settings.metersPerUnit === undefined) {
@@ -1595,6 +1599,11 @@ export const MapSetupView: React.FC = () => {
         alertUtilThresholdPct: settings.alertUtilThresholdPct ?? 80,
         alertUtilDurationSec: settings.alertUtilDurationSec ?? 30,
         alertReturnUtilPct: settings.alertReturnUtilPct ?? 60,
+        dropoffShare: sanitizeDropoffSettings(settings).dropoffShare,
+        dropoffPatienceSec: sanitizeDropoffSettings(settings).dropoffPatienceSec,
+        dropoffPatienceSpreadSec: sanitizeDropoffSettings(settings).dropoffPatienceSpreadSec,
+        dropoffDwellMinSec: sanitizeDropoffSettings(settings).dropoffDwellMinSec,
+        dropoffDwellMaxSec: sanitizeDropoffSettings(settings).dropoffDwellMaxSec,
       },
       roadSegments: map.roadSegments.map((seg) => {
         const polylinePx = seg.points.reduce(
@@ -2960,6 +2969,9 @@ export const MapSetupView: React.FC = () => {
             <div className="pt-1 pb-1">
               <VehicleMixControl disabled={isSimulationActive} />
             </div>
+
+            {/* Drop-off behavior (dropoffShare, patience, dwell time) */}
+            <DropoffBehaviorControl disabled={isSimulationActive} />
 
             {/* Vehicle geometry & gap */}
             <div className="flex flex-col space-y-1.5">
