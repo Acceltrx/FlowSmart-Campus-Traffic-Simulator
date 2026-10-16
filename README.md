@@ -1,6 +1,6 @@
 # FlowSmart
 
-FlowSmart is a web-based 2D top-down traffic flow simulator designed for the Don Bosco Technical College (DBTC) campus. It enables interactive modeling, visual simulation, and bottleneck analysis of campus vehicular traffic patterns.
+FlowSmart is a web-based 2D top-down traffic flow simulator designed for school campuses. It enables interactive modeling, visual simulation, and bottleneck analysis of campus vehicular traffic patterns.
 
 ## Features
 
