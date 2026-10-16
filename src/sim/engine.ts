@@ -276,6 +276,14 @@ export function createSimulation(
       ? (settings as unknown as { dropoffShare?: number }).dropoffShare!
       : 1.0;
 
+  // Drop-off patience: a vehicle held up near the drop-off zone (bay full / cars ahead dwelling) gives up
+  // waiting after DROPOFF_PATIENCE_SEC (+ a random per-vehicle spread) and drops off where it is.
+  // Tunable via settings.dropoffPatienceSec / settings.dropoffPatienceSpreadSec.
+  const patienceCfg = settings as unknown as { dropoffPatienceSec?: number; dropoffPatienceSpreadSec?: number };
+  const DROPOFF_PATIENCE_SEC = patienceCfg.dropoffPatienceSec ?? 30;
+  const DROPOFF_PATIENCE_SPREAD_SEC = patienceCfg.dropoffPatienceSpreadSec ?? 20;
+  const DROPOFF_PATIENCE_RANGE_M = 40; // only count waiting this close to the zone
+
   let simTime = 0;
   let vehicleIdCounter = 0;
   let spawnedStickerCount = 0;
@@ -803,6 +811,23 @@ export function createSimulation(
                 v.state = 'waiting';
                 dwellers?.add(v.id);
                 continue;
+              }
+              // Patience: held up near the zone for too long -> drop off right here instead
+              const heldNearZone = v.speedMS < 0.5 && distToStop > 0.5 && distToStop <= DROPOFF_PATIENCE_RANGE_M;
+              if (heldNearZone) {
+                if (v.patienceSec === undefined) {
+                  v.patienceSec = DROPOFF_PATIENCE_SEC + rng() * DROPOFF_PATIENCE_SPREAD_SEC;
+                }
+                v.dropWaitSec = (v.dropWaitSec ?? 0) + dtSeconds;
+                if (v.dropWaitSec >= v.patienceSec) {
+                  v.dwellRemainingSec = 20 + rng() * 40;
+                  v.droppedOffEarly = true;
+                  v.speedMS = 0;
+                  v.speedPxPerSec = 0;
+                  v.state = 'waiting';
+                  // Not added to the bay: it is not at the zone, so it does not use a bay slot
+                  continue;
+                }
               }
               dropStopDistM = distToStop;
             }

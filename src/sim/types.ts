@@ -83,6 +83,9 @@ export interface SimVehicle {
   totalWaitTimeSec: number;
   dwellRemainingSec: number; // For drop-off dwell
   dwellDone?: boolean; // true once the drop-off dwell has completed
+  dropWaitSec?: number; // time held up near the drop-off zone
+  patienceSec?: number; // this vehicle's patience before dropping off early
+  droppedOffEarly?: boolean; // gave up waiting and dropped off away from the zone
   entranceId: string;
   exitId: string;
   yieldingToLeader?: SimVehicle | null;
