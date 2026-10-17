@@ -9,14 +9,21 @@
  * - Fixed button width to prevent shifting when label changes
  */
 
-import React from 'react';
-import { Play, Square } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Play, Square, CircleHelp } from 'lucide-react';
 import { useTrafficStore } from '../../context/TrafficStoreContext';
 import { useSimulation } from '../../context/SimulationContext';
 import { ActiveTab } from '../../types/traffic';
+import { HelpModal } from '../common/HelpModal';
 
 export const TopNav: React.FC = () => {
   const { state, setActiveTab } = useTrafficStore();
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  // Close help window automatically whenever activeTab changes
+  useEffect(() => {
+    setHelpOpen(false);
+  }, [state.activeTab]);
   const {
     status,
     startNewRun,
@@ -106,8 +113,18 @@ export const TopNav: React.FC = () => {
           })}
         </nav>
 
-        {/* Right: Primary execution action with fixed width to prevent bar shift */}
-        <div className="flex items-center">
+        {/* Right: Help button and primary execution action */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            aria-label="How to use this screen"
+            title="How to use this screen"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1 focus-visible:ring-offset-[#254B98]"
+          >
+            <CircleHelp size={18} />
+          </button>
+
           <button
             type="button"
             onClick={handleMainAction}
@@ -130,6 +147,13 @@ export const TopNav: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* In-App Help Modal */}
+      <HelpModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        tab={state.activeTab}
+      />
     </header>
   );
 };

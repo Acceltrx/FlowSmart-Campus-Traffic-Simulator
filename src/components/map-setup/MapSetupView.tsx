@@ -1853,27 +1853,22 @@ export const MapSetupView: React.FC = () => {
               </button>
 
               {/* Erase Tool (36px tall) */}
-              <div className="flex flex-col space-y-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTool('erase');
-                    wireTool.setActiveRoadPoints([]);
-                  }}
-                  className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors cursor-pointer text-[13px] w-full ${
-                    activeTool === 'erase'
-                      ? 'bg-[#254B98] text-white font-medium'
-                      : 'text-[#111C2D] hover:bg-[#F5F6F8]'
-                  }`}
-                  title="Click a road or marker to delete it"
-                >
-                  <Eraser size={16} />
-                  <span>Erase</span>
-                </button>
-                <span className="text-[12px] text-[#6B7A99] px-1 leading-snug">
-                  Click a road or marker to delete it.
-                </span>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTool('erase');
+                  wireTool.setActiveRoadPoints([]);
+                }}
+                className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors cursor-pointer text-[13px] ${
+                  activeTool === 'erase'
+                    ? 'bg-[#254B98] text-white font-medium'
+                    : 'text-[#111C2D] hover:bg-[#F5F6F8]'
+                }`}
+                title="Click a road or marker to delete it"
+              >
+                <Eraser size={16} />
+                <span>Erase</span>
+              </button>
 
               {/* Split Tool (36px tall) */}
               <button
