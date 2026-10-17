@@ -461,7 +461,7 @@ Don Bosco Technical College, Mandaluyong
 
 | Member | Role |
 |---|---|
-| **Ethan Jaiden P. Tamayo** | Group Leader, Lead Developer (sole software developer of FlowSmart) |
+| **Ethan Jaiden P. Tamayo** | Group Leader, Lead Software Developer |
 | Vince Wramlee O. Del Rosario | Research Group Member |
 | John Aron Isaiah Q. Calabia | Research Group Member |
 | Eduard Jefferson B. Manalo | Research Group Member |
