@@ -27,7 +27,7 @@ import {
   RoadSegment,
 } from '../types/traffic';
 
-import { SAMPLE_MAP } from '../utils/sampleMap';
+import { SAMPLE_MAP, SAMPLE_MAP_SPAWN_RATES } from '../utils/sampleMap';
 import { DEFAULT_METERS_PER_UNIT, clampSpeedKmH, DEFAULT_SPEED_KMH } from '../utils/scale';
 import { migrateDropoffShare, sanitizeDestinationSplits } from '../utils/destinationSplit';
 
@@ -40,10 +40,7 @@ export const CURRENT_STORAGE_VERSION = '1.4.0';
 // Default DBTC campus settings
 export const DEFAULT_SETTINGS: SimulationSettings = {
   defaultSpeedLimit: DEFAULT_SPEED_KMH, // 10 km/h
-  spawnRates: {
-    'gate-1': 18, // veh/min Gate 1 (main)
-    'gate-2': 12, // veh/min Gate 2 (east)
-  },
+  spawnRates: { ...SAMPLE_MAP_SPAWN_RATES },
   stickerShare: 0.7, // 70% sticker-holding vehicles
   metersPerUnit: DEFAULT_METERS_PER_UNIT,
   vehicleLengthMeters: 4.5,
@@ -68,7 +65,7 @@ function clampOrDefault(value: unknown, min: number, max: number, fallback: numb
 
 /**
  * Clamps the drop-off settings to their allowed ranges. Missing or non-numeric values get the defaults.
- * dropoffShare 0 to 1, patience 5 to 300 s, spread 0 to 120 s, dwell min/max 5 to 300 s (max is raised to min if lower).
+ * patience 5 to 300 s, spread 0 to 120 s, dwell min/max 5 to 300 s (max is raised to min if lower).
  * Returns a new object; other settings are left untouched.
  */
 export function sanitizeDropoffSettings<T extends Partial<SimulationSettings>>(settings: T): T {
@@ -257,7 +254,7 @@ function getInitialState(): State {
     runLog: loadFromStorage<RunLogEntry[]>(STORAGE_KEY_RUNLOG, []),
     activeTab: 'simulation',
     simulationStatus: 'idle',
-    selectedSegmentId: 'seg-4',
+    selectedSegmentId: null,
     simSpeed: 1,
     referenceImageUrl: null, // Session-only, never persisted
   };
@@ -336,12 +333,11 @@ function trafficReducer(state: State, action: Action): State {
       return {
         ...state,
         map: SAMPLE_MAP,
+        selectedSegmentId: null,
         settings: {
           ...state.settings,
-          spawnRates: {
-            'gate-1': 18,
-            'gate-2': 12,
-          },
+          spawnRates: { ...SAMPLE_MAP_SPAWN_RATES },
+          destinationSplits: {},
         },
       };
 

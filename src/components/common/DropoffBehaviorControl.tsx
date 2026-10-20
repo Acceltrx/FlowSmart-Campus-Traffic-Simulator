@@ -1,6 +1,6 @@
 /**
  * FlowSmart - Drop-off behavior control
- * Settings: dropoffShare, dropoffPatienceSec, dropoffPatienceSpreadSec, dropoffDwellMinSec, dropoffDwellMaxSec.
+ * Settings: dropoffPatienceSec, dropoffPatienceSpreadSec, dropoffDwellMinSec, dropoffDwellMaxSec.
  * Uses the same local-string-state pattern as VehicleMixControl: typing an empty field never snaps back,
  * values are clamped on change (to the store) and on blur (to the field). Ranges match sanitizeDropoffSettings.
  * Disabled (greyed, Lock icon in the header) while a simulation is running or paused.

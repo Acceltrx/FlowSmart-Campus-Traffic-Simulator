@@ -547,7 +547,7 @@ export const MapSetupView: React.FC = () => {
   }, [activeTool]);
 
   // Selection state
-  const [selectedRoadId, setSelectedRoadId] = useState<string | null>('seg-4');
+  const [selectedRoadId, setSelectedRoadId] = useState<string | null>(null);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
 
   // Layers visibility toggles
@@ -1603,7 +1603,6 @@ export const MapSetupView: React.FC = () => {
         alertUtilThresholdPct: settings.alertUtilThresholdPct ?? 80,
         alertUtilDurationSec: settings.alertUtilDurationSec ?? 30,
         alertReturnUtilPct: settings.alertReturnUtilPct ?? 60,
-        dropoffShare: sanitizeDropoffSettings(settings).dropoffShare,
         dropoffPatienceSec: sanitizeDropoffSettings(settings).dropoffPatienceSec,
         dropoffPatienceSpreadSec: sanitizeDropoffSettings(settings).dropoffPatienceSpreadSec,
         dropoffDwellMinSec: sanitizeDropoffSettings(settings).dropoffDwellMinSec,
@@ -1632,6 +1631,7 @@ export const MapSetupView: React.FC = () => {
     delete (cleanMap as unknown as Record<string, unknown>).metersPerPixel;
     if (cleanMap.settings) {
       delete (cleanMap.settings as unknown as Record<string, unknown>).metersPerPixel;
+      delete (cleanMap.settings as unknown as Record<string, unknown>).dropoffShare;
     }
 
     const jsonStr = JSON.stringify(cleanMap, null, 2);

@@ -12,6 +12,7 @@
  */
 
 import { SimulationResult, MapConfig } from '../types/traffic';
+import { distance } from '../utils/mapGeometry';
 
 export interface ActionableInsight {
   id: string;
@@ -29,13 +30,21 @@ export function generateActionableInsights(
   const topBottleneck = bottlenecks[0];
 
   // Rule 1: Top bottleneck is the drop-off zone -> 'Stagger drop-off windows' or 'Add a second loading bay'
+  const topSegment = topBottleneck
+    ? mapConfig?.roadSegments.find((r) => r.id === topBottleneck.segmentId)
+    : undefined;
+  const dropoffMarkers = mapConfig?.zoneMarkers.filter((m) => m.type === 'dropoff') || [];
+  const isNearDropoff = Boolean(
+    topSegment &&
+      dropoffMarkers.some((m) => topSegment.points.some((p) => distance(p, m.position) <= 12))
+  );
+
   const isTopDropoff =
     topBottleneck &&
     (topBottleneck.segmentName.toLowerCase().includes('drop-off') ||
       topBottleneck.segmentName.toLowerCase().includes('dropoff') ||
       topBottleneck.segmentName.toLowerCase().includes('loop') ||
-      topBottleneck.segmentId.includes('seg-5') ||
-      topBottleneck.segmentId.includes('seg-6'));
+      isNearDropoff);
 
   if (isTopDropoff) {
     if (topBottleneck.maxQueueLength > 8) {
@@ -79,14 +88,22 @@ export function generateActionableInsights(
   }
 
   // Rule 3: Queue at an entrance exceeds 10 vehicles -> 'Add a lane or a second gate at <name>'
-  const entranceBottleneck = bottlenecks.find(
-    (b) =>
-      b.maxQueueLength > 10 &&
-      (b.segmentName.toLowerCase().includes('gate') ||
-        b.segmentName.toLowerCase().includes('entry') ||
-        b.segmentName.toLowerCase().includes('approach') ||
-        mapConfig?.zoneMarkers.some((m) => m.type === 'entrance' && m.roadSegmentId === b.segmentId))
-  );
+  const entranceMarkers = mapConfig?.zoneMarkers.filter((m) => m.type === 'entrance') || [];
+  const entranceBottleneck = bottlenecks.find((b) => {
+    if (b.maxQueueLength <= 10) return false;
+    const nameLower = b.segmentName.toLowerCase();
+    if (
+      nameLower.includes('gate') ||
+      nameLower.includes('entry') ||
+      nameLower.includes('approach')
+    ) {
+      return true;
+    }
+    const seg = mapConfig?.roadSegments.find((r) => r.id === b.segmentId);
+    return Boolean(
+      seg && entranceMarkers.some((m) => seg.points.some((p) => distance(p, m.position) <= 12))
+    );
+  });
 
   if (entranceBottleneck) {
     insights.push({

@@ -36,6 +36,10 @@ export function runHarness(): ScaleTestResult[] {
   const results: ScaleTestResult[] = [];
   let totalViolationsAllScales = 0;
 
+  const entrances = SAMPLE_MAP.zoneMarkers.filter((m) => m.type === 'entrance');
+  const ent1Id = entrances[0]?.id || 'entrance-1';
+  const ent2Id = entrances[1]?.id || 'entrance-2';
+
   for (const scale of SCALES) {
     const testSettings: SimulationSettings = {
       ...DEFAULT_SETTINGS,
@@ -44,8 +48,8 @@ export function runHarness(): ScaleTestResult[] {
       layoutName: DEFAULT_SETTINGS.layoutName ?? 'Harness',
       metersPerUnit: scale,
       spawnRates: {
-        'gate-1': 25,
-        'gate-2': 20,
+        [ent1Id]: 25,
+        [ent2Id]: 20,
       },
       standstillGapMeters: STANDSTILL_GAP_M,
       simDurationMin: SIM_DURATION_MIN,
@@ -89,7 +93,8 @@ export function runHarness(): ScaleTestResult[] {
           }
 
           // Invariant 2: No big hole when stopped: netGap <= STANDSTILL_GAP_M + 1.0
-          if (v.speedMS < 0.1 && leader.speedMS < 0.1 && !isHoldingAtApproach) {
+          // (Exclude vehicles stopped at a drop-off zone unloading passengers)
+          if (v.speedMS < 0.1 && leader.speedMS < 0.1 && !isHoldingAtApproach && v.state !== 'waiting') {
             stoppedChecks++;
             if (netGapMeters > maxStoppedGap) {
               maxStoppedGap = netGapMeters;

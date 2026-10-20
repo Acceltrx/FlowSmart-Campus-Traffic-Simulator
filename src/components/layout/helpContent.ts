@@ -67,7 +67,7 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
     steps: [
       {
         heading: 'Start a layout',
-        body: 'Choose Load sample map to try a ready-made example, or Start blank layout to draw your own. You can also attach a PNG or JPG picture of the campus (200 KB to 5 MB) and trace over it. The picture is only a guide and is not saved, so attach it again after you reload the page.',
+        body: 'Choose Load sample map to try a ready-made example, or Start blank layout to draw your own. You can also attach a PNG or JPG picture of the campus (200 KB to 5 MB) and trace over it. The picture is only a guide and is not saved, so attach it again after you reload the page. New layout clears the roads and markers but keeps the picture, the scale and your run history, and names the next layout (Layout B, Layout C and so on). Reset all data erases everything, including the run history.',
       },
       {
         heading: 'Set the map scale',
@@ -75,11 +75,11 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
       },
       {
         heading: 'Draw roads',
-        body: 'Pick the Road tool, click to place points along the road, and double-click to finish it. New roads snap to existing road ends. Use Split to add an intersection in the middle of a road, and Erase to remove a road or marker.',
+        body: 'Pick the Road tool and click to place points along the road. Clicking a road end, a marker or the middle of another road connects to it, and clicking the middle of a road makes an intersection. Double-click or press Enter to finish, press Esc to cancel, press Backspace or right-click to undo the last point, and hold Shift to lock the next piece to straight angles. The Road tool stays on so you can draw the next road right away; choose Select to stop. To change a road later, pick Select, click it, and drag its round handles to move them (roads that share an end move together) or drag a + handle to add a bend. Use Split to add an intersection in the middle of a road, and Erase to remove a road or marker. The length in meters shows while drawing, and Show lengths labels every road.',
       },
       {
         heading: 'Place zone markers',
-        body: 'Under Zone markers choose Entrance (where cars come in), Exit (where cars leave) or Drop-off (where students get dropped off), then click the map. You need at least one entrance and one exit joined by roads before you can run a simulation.',
+        body: 'Under Zone markers choose Entrance (where cars come in), Exit (where cars leave) or Drop-off (where students get dropped off), then click the map. You need at least one entrance and one exit joined by roads before you can run a simulation. To move a marker, pick Select and drag it, or click it and use the arrow keys (hold Shift for bigger steps). If no road is within 6 meters of a marker, an amber note tells you, because cars attach to the nearest road point.',
       },
       {
         heading: 'Set road rules with Select',
@@ -184,18 +184,49 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
               'Locked while a simulation is running. If an entrance connects only to sticker-only roads, only sticker cars will enter there.',
           },
           {
+            name: 'Destination split',
+            what:
+              'Sets where the cars from each entrance go: to one of the drop-off zones, or straight to an exit without stopping. Each entrance has its own split, shown as a section you can open and close.',
+            why:
+              'Use it to match how families really spread out between drop-off points, for example 20% at Drop-off 1 and 40% at each of the other two. Give Direct to exit a share for cars that do not drop anyone off.',
+            fields: [
+              {
+                label: 'Drop-off rows',
+                text: 'The share of the cars from this entrance that go to that drop-off zone.',
+                range: '0% to 100%',
+                defaultValue: 'Equal shares across all drop-offs',
+              },
+              {
+                label: 'Direct to exit',
+                text: 'The share of cars that skip the drop-offs and drive straight to an exit.',
+                range: '0% to 100%',
+                defaultValue: '0%',
+              },
+              {
+                label: 'Total',
+                text:
+                  'The shares of one entrance should add up to 100%. If they do not, the total turns amber and the shares are scaled to 100% when the run starts.',
+              },
+              {
+                label: 'Balance evenly',
+                text: 'Gives every drop-off and Direct to exit the same share for that entrance.',
+              },
+              {
+                label: 'Apply to all entrances',
+                text:
+                  'Copies this entrance\'s split to every other entrance after you confirm. It only appears when the map has more than one entrance.',
+              },
+            ],
+            note:
+              'Locked while a simulation is running, but you can still open the sections to read them. If a drop-off cannot be reached from an entrance, for example because of a sticker-only road, an amber note appears and that share goes to the other places that car can reach. Sticker and non-sticker cars use the same split. This replaces the old "Cars that drop off" setting; maps saved before this change are converted automatically.',
+          },
+          {
             name: 'Drop-off behavior',
             what:
-              'Controls how cars behave when students get dropped off: what share of cars use drop-offs, how long drivers wait before dropping off in place, and how long passenger unloading takes.',
+              'Controls how drivers act at a drop-off: how long they wait in line before dropping off where they are stopped, and how long unloading takes. Which drop-offs cars use is set in Destination split.',
             why:
               'Change these values to match observed morning drop-off habits or test the effect of quicker drop-off procedures.',
             fields: [
-              {
-                label: 'Cars that drop off (%)',
-                text: 'The percentage of arriving cars that must visit a drop-off area before heading to an exit.',
-                range: '0% to 100%',
-                defaultValue: '100%',
-              },
               {
                 label: 'Patience (s)',
                 text:
@@ -295,7 +326,7 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
                 label: 'Vehicles per minute',
                 text: 'Target arrival rate at the gate. Cars spawn at randomized intervals around this value.',
                 range: '0 to 120 veh/min',
-                defaultValue: '18 veh/min at Gate 1, 12 veh/min at Gate 2',
+                defaultValue: '3 veh/min at each entrance in the sample map',
               },
             ],
             note:
@@ -312,7 +343,8 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
       'Your map is saved in this browser automatically. Use Export map to save a copy as a JSON file to keep or share.',
       'You can clear everything and start over anytime with Reset all data.',
       'The map view can be zoomed with the + and − buttons or the mouse wheel, and moved around by dragging the canvas background.',
-      'Settings with a lock icon, like vehicle mix and drop-off behavior, cannot be changed while a simulation is running. Stop the run first to edit them.',
+      'Settings with a lock icon, like vehicle mix, destination split and drop-off behavior, cannot be changed while a simulation is running. Stop the run first to edit them.',
+      'Destination split and Drop-off behavior are locked while a run is going, like Vehicle mix.',
       'All right-panel settings are saved with your map and included in JSON exports, so your test scenarios can be shared or reloaded anytime.',
     ],
   },
@@ -328,11 +360,11 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
       },
       {
         heading: 'Read the left panel',
-        body: 'Setup summary shows how many entrances, exits, drop-offs and road segments you have, plus the spawn rates and speed limit. Route eligibility shows which roads sticker and non-sticker cars may use. Simulation state shows whether the run is ready, running, paused or finished. Settings are locked while a run is going.',
+        body: 'Setup summary shows how many entrances, exits, drop-offs and road segments you have, plus the spawn rates and speed limit. Route eligibility shows which roads sticker and non-sticker cars may use. For an entrance that allows only one kind of car, Route eligibility shows "Sticker holders only" or "Non-sticker only" in amber instead of an error, and this is normal. You can change the sticker share under Vehicle mix before a run, but it is locked during one. Simulation state shows whether the run is ready, running, paused or finished. Settings are locked while a run is going.',
       },
       {
         heading: 'Watch the canvas',
-        body: 'Each small block is a car. Sticker cars are white and non-sticker cars are blue. Drop-off areas are amber and cars that are stopped in a queue are marked as queued. Scroll to zoom, drag to pan, and press Fit to panel to see the whole map.',
+        body: 'Each small block is a car. Sticker cars are white and non-sticker cars are blue. Drop-off areas are amber and cars that are stopped in a queue are marked as queued. Scrolling zooms around the cursor, dragging pans, and Fit brings the whole map back. Zooming and panning never change the simulation.',
       },
       {
         heading: 'Turn on the heatmap',
@@ -348,13 +380,19 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
       },
       {
         heading: 'Finish and review',
-        body: 'When the run ends, press View results to see the numbers, or Run again to start a fresh run.',
+        body: 'When the run ends, the right panel shows Run again, View results and Edit layout. Run again starts a new run on the same map. View results opens the numbers. Edit layout takes you back to Map setup. Clear on the finished message returns the screen to idle without deleting the saved run.',
+      },
+      {
+        heading: 'Change the map between runs',
+        body: 'If you change the map or the settings after a run has finished, the finished screen clears by itself and returns to idle. The run stays in Results. If you edit the layout while a run is going, the run keeps using the old layout and an amber label says the changes apply to the next run.',
       },
     ],
     tips: [
       'Stop clears the cars but keeps your map and settings.',
       'Each finished run is saved to the run log, with the spawn rates and sticker mix it used.',
       'Cars appear at random times around the spawn rate, so two runs of the same map will not match exactly. Run each layout several times.',
+      'Space starts, pauses and resumes the run when the cursor is over the map.',
+      'Each finished run saves the split between drop-offs that it used, so you can compare runs with different splits.',
     ],
   },
   results: {
@@ -366,7 +404,7 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
       {
         heading: 'Check which setup you are looking at',
         body:
-          'The configuration section shows the layout name, the run number, the spawn rate for each entrance and the sticker share. Sticker share is the real number of sticker and non-sticker cars that entered. It can differ a little from the mix you chose, because each car is picked at random. Change the Layout name in Map setup to keep different layouts apart in the run log.',
+          'The configuration section shows the layout name, the run number, the spawn rate for each entrance and the sticker share. Sticker share is the real number of sticker and non-sticker cars that entered. It can differ a little from the mix you chose, because each car is picked at random. Change the Layout name in Map setup to keep different layouts apart in the run log. The Run details card lists, for each entrance, the destination split used in that run (for example Gate 1: Drop-off 1 20, Drop-off 2 40, Drop-off 3 40, Direct 0), and runs saved before the split existed show n/a.',
       },
       {
         heading: 'Read the five metric cards',
@@ -448,7 +486,7 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
       {
         heading: 'Check drop-off performance',
         body:
-          'The drop-off cards show Early drop-offs (cars that gave up waiting in line and dropped off students away from the designated zone) and Average wait at drop-off (time held near the zone before unloading). High early drop-offs indicate that the drop-off loop cannot handle the arrival volume.',
+          'The drop-off cards show Early drop-offs (cars that gave up waiting in line and dropped off students away from the designated zone) and Average wait at drop-off (time held near the zone before unloading). High early drop-offs indicate that the drop-off loop cannot handle the arrival volume. The Drop-off zones table has one row for each drop-off: how many cars were sent there, their share of all cars in the run, how many dropped off at the zone, and how many gave up and dropped off early. A last row, Direct to exit, counts the cars that never went to a drop-off. The share is what this run actually produced, so it can differ a few points from the split you set, because each car is chosen at random. Early drop-offs show as a count out of the total drop-offs with a percentage. Cars still driving when the run ended are not counted as dropped off.',
       },
       {
         heading: 'Inspect the bottleneck analysis',
@@ -468,7 +506,7 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
       {
         heading: 'Export your findings',
         body:
-          'Click Export run log (CSV) to download the complete history of evaluation runs for spreadsheet analysis. Click Export report to generate a downloadable landscape PDF report containing all charts, metrics, bottlenecks, and insights for stakeholders.',
+          'Click Export run log (CSV) to download the complete history of evaluation runs for spreadsheet analysis. Click Export report to generate a downloadable landscape PDF report containing all charts, metrics, bottlenecks, and insights for stakeholders. Both the CSV and the PDF include the Drop-off zones table and the split used.',
       },
     ],
     tips: [
@@ -476,6 +514,7 @@ export const HELP_CONTENT: Record<ActiveTab, HelpGuide> = {
       'All numbers count only completed vehicle trips; vehicles still on campus when the run ended are not counted.',
       'Export run log (CSV) saves all evaluation runs, allowing offline comparison across different road network designs in Excel or Google Sheets.',
       'Use Export report to create a clean PDF summary to present to school administrators or traffic advisors.',
+      'Compare two runs that have different drop-off splits to see which zone causes the queues; look at the zone with the most early drop-offs first.',
     ],
   },
 };
