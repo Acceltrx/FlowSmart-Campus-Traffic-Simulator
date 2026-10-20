@@ -54,7 +54,9 @@ export interface SimulationSettings {
   standstillGapMeters?: number; // default 2.0 m
   simDurationMin: number; // default 30 minutes
   layoutName: string; // e.g. 'Layout A'
-  dropoffShare?: number; // fraction of cars that drop off, 0 to 1, default 1.0
+  /** @deprecated Replaced by destinationSplits. Kept for backwards compatibility with saved maps and imports. */
+  dropoffShare?: number;
+  destinationSplits?: Record<string, Record<string, number>>; // entranceId -> (dropoffMarkerId | 'direct') -> percentage (0..100)
   dropoffPatienceSec?: number; // wait near the zone before dropping off where the car is, default 30 s
   dropoffPatienceSpreadSec?: number; // random extra patience per car, 0 to this value, default 20 s
   dropoffDwellMinSec?: number; // shortest drop-off dwell, default 20 s
@@ -112,6 +114,8 @@ export interface SimulationResult {
   totalDropoffs?: number; // vehicles whose drop-off started
   earlyDropoffs?: number; // of those, cars that gave up waiting and dropped off away from the zone
   avgDropWaitSec?: number; // mean time held near the zone before the drop-off started
+  dropoffStats?: { dropoffId: string; name: string; assigned: number; droppedAtZone: number; droppedEarly: number }[];
+  directAssigned?: number;
 }
 
 export interface RunLogEntry {
@@ -133,5 +137,8 @@ export interface RunLogEntry {
   totalDropoffs?: number;
   earlyDropoffs?: number;
   avgDropWaitSec?: number;
+  dropoffStats?: { dropoffId: string; name: string; assigned: number; droppedAtZone: number; droppedEarly: number }[];
+  directAssigned?: number;
+  destinationSplits?: Record<string, Record<string, number>>;
   result?: SimulationResult;
 }

@@ -29,6 +29,7 @@ import {
 
 import { SAMPLE_MAP } from '../utils/sampleMap';
 import { DEFAULT_METERS_PER_UNIT, clampSpeedKmH, DEFAULT_SPEED_KMH } from '../utils/scale';
+import { migrateDropoffShare, sanitizeDestinationSplits } from '../utils/destinationSplit';
 
 const STORAGE_KEY_MAP = 'flowsmart.map';
 const STORAGE_KEY_SETTINGS = 'flowsmart.settings';
@@ -49,7 +50,6 @@ export const DEFAULT_SETTINGS: SimulationSettings = {
   standstillGapMeters: 2.0,
   simDurationMin: 30,
   layoutName: 'Layout A',
-  dropoffShare: 1.0,
   dropoffPatienceSec: 30,
   dropoffPatienceSpreadSec: 20,
   dropoffDwellMinSec: 20,
@@ -76,7 +76,6 @@ export function sanitizeDropoffSettings<T extends Partial<SimulationSettings>>(s
   const dwellMax = clampOrDefault(settings.dropoffDwellMaxSec, 5, 300, DEFAULT_SETTINGS.dropoffDwellMaxSec!);
   return {
     ...settings,
-    dropoffShare: clampOrDefault(settings.dropoffShare, 0, 1, DEFAULT_SETTINGS.dropoffShare!),
     dropoffPatienceSec: clampOrDefault(settings.dropoffPatienceSec, 5, 300, DEFAULT_SETTINGS.dropoffPatienceSec!),
     dropoffPatienceSpreadSec: clampOrDefault(
       settings.dropoffPatienceSpreadSec,
@@ -240,9 +239,14 @@ function getInitialState(): State {
   }
 
   settings.defaultSpeedLimit = clampSpeedKmH(settings.defaultSpeedLimit);
+  migrateDropoffShare(settings, map);
+  settings.destinationSplits = sanitizeDestinationSplits(settings.destinationSplits, map);
+
   if (map.settings) {
     map.settings.defaultSpeedLimit = clampSpeedKmH(map.settings.defaultSpeedLimit);
     map.settings = sanitizeDropoffSettings(map.settings);
+    migrateDropoffShare(map.settings, map);
+    map.settings.destinationSplits = sanitizeDestinationSplits(map.settings.destinationSplits, map);
   }
 
   registerCurrentMap(map);
@@ -279,6 +283,9 @@ function trafficReducer(state: State, action: Action): State {
       if (sanitized.defaultSpeedLimit !== undefined) {
         sanitized.defaultSpeedLimit = clampSpeedKmH(sanitized.defaultSpeedLimit);
       }
+      if (sanitized.destinationSplits !== undefined) {
+        sanitized.destinationSplits = sanitizeDestinationSplits(sanitized.destinationSplits, state.map);
+      }
       const newSettings = sanitizeDropoffSettings({ ...state.settings, ...sanitized });
       const updatedMap = {
         ...state.map,
@@ -312,6 +319,11 @@ function trafficReducer(state: State, action: Action): State {
         defaultSpeedLimit: clampSpeedKmH(cleanMap.settings?.defaultSpeedLimit ?? state.settings.defaultSpeedLimit),
         metersPerUnit: newMeters,
       };
+      migrateDropoffShare(syncedSettings, cleanMap);
+      syncedSettings.destinationSplits = sanitizeDestinationSplits(
+        cleanMap.settings?.destinationSplits ?? state.settings.destinationSplits,
+        cleanMap
+      );
       const finalSettings = sanitizeDropoffSettings(syncedSettings);
       cleanMap.settings = finalSettings;
       return { ...state, map: cleanMap, settings: finalSettings };

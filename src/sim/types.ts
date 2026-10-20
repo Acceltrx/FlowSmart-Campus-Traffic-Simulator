@@ -50,7 +50,8 @@ export interface Router {
     vehicle: { isSticker: boolean; usesDropoff: boolean },
     graph: RoadGraph,
     entranceMarkerId: string,
-    targetExitId?: string
+    targetExitId?: string,
+    targetDropoffId?: string
   ) => {
     routeEdges: GraphEdge[];
     routePoints: Point[];
@@ -58,6 +59,16 @@ export interface Router {
     dropoffId?: string;
   } | null;
   allowedClasses?: (entranceId: string) => { sticker: boolean; nonSticker: boolean };
+  reachableDestinations?: (entranceId: string) => {
+    sticker: { dropoffIds: string[]; direct: boolean };
+    nonSticker: { dropoffIds: string[]; direct: boolean };
+  };
+  chooseDestination?: (
+    entranceId: string,
+    isSticker: boolean,
+    split: Record<string, number>,
+    roll: number
+  ) => { usesDropoff: boolean; dropoffId?: string } | null;
 }
 
 export interface SimVehicle {

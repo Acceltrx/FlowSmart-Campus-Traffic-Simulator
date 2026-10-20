@@ -27,6 +27,7 @@ import {
   Point,
   BottleneckRank,
 } from '../types/traffic';
+import { getEntranceSplit } from '../utils/destinationSplit';
 import {
   SimVehicle,
   SimSnapshot,
@@ -271,7 +272,6 @@ export function createSimulation(
   const durationSeconds = (settings.simDurationMin || 30) * 60;
   const maxSimTimeWithGrace = durationSeconds + 10 * 60; // 10 extra minutes for campus to clear
   const stickerShare = settings.stickerShare !== undefined ? settings.stickerShare : 0.7;
-  const dropoffShare = settings.dropoffShare ?? 1.0;
 
   // Drop-off patience: a vehicle held up near the drop-off zone (bay full / cars ahead dwelling) gives up
   // waiting after DROPOFF_PATIENCE_SEC (+ a random per-vehicle spread) and drops off where it is.
@@ -295,6 +295,20 @@ export function createSimulation(
   };
   let spawnedStickerCount = 0;
   let spawnedNonStickerCount = 0;
+
+  // Per drop-off ID counters and direct count
+  interface DropoffCounter {
+    assigned: number;
+    droppedAtZone: number;
+    droppedEarly: number;
+  }
+  const dropoffMarkers = mapConfig.zoneMarkers.filter((m) => m.type === 'dropoff');
+  const dropoffCounters = new Map<string, DropoffCounter>();
+  for (const dm of dropoffMarkers) {
+    dropoffCounters.set(dm.id, { assigned: 0, droppedAtZone: 0, droppedEarly: 0 });
+  }
+  let directAssigned = 0;
+
   let isRunCompleted = false;
 
   // Active campus vehicles
@@ -347,7 +361,6 @@ export function createSimulation(
   const roadCount = mapConfig.roadSegments.length;
   const entranceMarkers = mapConfig.zoneMarkers.filter((m) => m.type === 'entrance');
   const exitMarkers = mapConfig.zoneMarkers.filter((m) => m.type === 'exit');
-  const dropoffMarkers = mapConfig.zoneMarkers.filter((m) => m.type === 'dropoff');
 
   let initialEdgeCase: EdgeCaseInfo | null = null;
 
@@ -369,11 +382,10 @@ export function createSimulation(
       message:
         'No exit configured. Vehicles require at least one exit gate to complete trips.',
     };
-  } else if (dropoffMarkers.length === 0 && dropoffShare > 0) {
+  } else if (dropoffMarkers.length === 0) {
     initialEdgeCase = {
       type: 'no-drop-off',
-      message:
-        'No drop-off zone placed on campus. Vehicles requiring a drop-off cannot complete their trips.',
+      message: 'No drop-off zone placed. All vehicles go straight to an exit.',
     };
   } else {
     // Check validation from DrawnPathRouter
@@ -581,6 +593,11 @@ export function createSimulation(
 
     // 1. Spawning: exponential inter-arrival time around configured rate
     if (simTime < durationSeconds) {
+      const entranceSplits = new Map<string, Record<string, number>>();
+      for (const spawner of spawners) {
+        entranceSplits.set(spawner.entranceId, getEntranceSplit(settings, mapConfig, spawner.entranceId));
+      }
+
       for (const spawner of spawners) {
         if (spawner.rateVehPerMin <= 0) continue;
 
@@ -601,9 +618,24 @@ export function createSimulation(
             isSticker = roll < stickerShare;
           }
 
-          const usesDropoff = rng() < dropoffShare;
+          const split = entranceSplits.get(spawner.entranceId)!;
+          const dest = router.chooseDestination
+            ? router.chooseDestination(spawner.entranceId, isSticker, split, rng())
+            : { usesDropoff: false };
 
-          const planned = router.route({ isSticker, usesDropoff }, graph, spawner.entranceId);
+          if (!dest) {
+            unroutableSpawnsCount++;
+            scheduleNextSpawn(spawner);
+            continue;
+          }
+
+          const planned = router.route(
+            { isSticker, usesDropoff: dest.usesDropoff },
+            graph,
+            spawner.entranceId,
+            undefined,
+            dest.dropoffId
+          );
 
           if (!planned || planned.routeEdges.length === 0) {
             unroutableSpawnsCount++;
@@ -638,6 +670,12 @@ export function createSimulation(
             } else {
               spawnedNonStickerCount++;
             }
+            if (dest.usesDropoff && dest.dropoffId) {
+              const c = dropoffCounters.get(dest.dropoffId);
+              if (c) c.assigned++;
+            } else {
+              directAssigned++;
+            }
             const { point, headingRad } = getPointAndHeadingAlongEdge(firstEdge, 0);
 
             const initialSpeedMS = Math.min(firstEdge.speedLimitMS, 3.0);
@@ -645,8 +683,8 @@ export function createSimulation(
             const newVeh: SimVehicle = {
               id: `veh-${vehicleIdCounter}`,
               isSticker,
-              usesDropoff,
-              dropoffId: planned.dropoffId,
+              usesDropoff: dest.usesDropoff,
+              dropoffId: dest.dropoffId,
               position: point,
               headingRad,
               prevPosition: { ...point },
@@ -814,6 +852,11 @@ export function createSimulation(
                 // Uniform dwell time between the configured min and max (default 20 to 60 s)
                 v.dwellRemainingSec = DROPOFF_DWELL_MIN_SEC + rng() * (DROPOFF_DWELL_MAX_SEC - DROPOFF_DWELL_MIN_SEC);
                 recordDropoffStart(v, false);
+                const targetDropoffId = v.dropoffId || dropMarker.id;
+                if (targetDropoffId) {
+                  const c = dropoffCounters.get(targetDropoffId);
+                  if (c) c.droppedAtZone++;
+                }
                 v.speedMS = 0;
                 v.speedPxPerSec = 0;
                 v.state = 'waiting';
@@ -831,6 +874,11 @@ export function createSimulation(
                   v.dwellRemainingSec = DROPOFF_DWELL_MIN_SEC + rng() * (DROPOFF_DWELL_MAX_SEC - DROPOFF_DWELL_MIN_SEC);
                   v.droppedOffEarly = true;
                   recordDropoffStart(v, true);
+                  const targetDropoffId = v.dropoffId || dropMarker.id;
+                  if (targetDropoffId) {
+                    const c = dropoffCounters.get(targetDropoffId);
+                    if (c) c.droppedEarly++;
+                  }
                   v.speedMS = 0;
                   v.speedPxPerSec = 0;
                   v.state = 'waiting';
@@ -1329,6 +1377,17 @@ export function createSimulation(
       totalDropoffs,
       earlyDropoffs,
       avgDropWaitSec: totalDropoffs > 0 ? Math.round((dropWaitSumSec / totalDropoffs) * 10) / 10 : 0,
+      dropoffStats: dropoffMarkers.map((dm) => {
+        const c = dropoffCounters.get(dm.id) || { assigned: 0, droppedAtZone: 0, droppedEarly: 0 };
+        return {
+          dropoffId: dm.id,
+          name: dm.name,
+          assigned: c.assigned,
+          droppedAtZone: c.droppedAtZone,
+          droppedEarly: c.droppedEarly,
+        };
+      }),
+      directAssigned,
     };
   }
 

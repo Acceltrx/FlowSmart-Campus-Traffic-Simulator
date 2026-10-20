@@ -26,6 +26,7 @@ import {
   MapConfig,
 } from '../types/traffic';
 import { getMetersPerUnit } from '../utils/scale';
+import { getEntranceSplit } from '../utils/destinationSplit';
 
 export interface AlertItem {
   id: string;
@@ -136,6 +137,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
   const completedMapRef = useRef<MapConfig | null>(null);
   const completedSettingsKeyRef = useRef<string>('');
   const runningMapRef = useRef<MapConfig | null>(null);
+  const runDestinationSplitsRef = useRef<Record<string, Record<string, number>>>({});
   const routeValidationRef = useRef<RouteValidationResult>(routeValidation);
   routeValidationRef.current = routeValidation;
 
@@ -298,6 +300,9 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
         totalDropoffs: result.totalDropoffs,
         earlyDropoffs: result.earlyDropoffs,
         avgDropWaitSec: result.avgDropWaitSec,
+        dropoffStats: result.dropoffStats,
+        directAssigned: result.directAssigned,
+        destinationSplits: runDestinationSplitsRef.current,
         result,
       };
 
@@ -341,6 +346,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
         defaultSpeedLimit: s.defaultSpeedLimit,
         metersPerUnit: s.metersPerUnit,
         simDurationMin: s.simDurationMin,
+        destinationSplits: s.destinationSplits,
       });
       runningMapRef.current = null;
     },
@@ -394,6 +400,18 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
 
     const seed = Date.now() & 0xffffffff;
     currentSeedRef.current = seed;
+
+    // Capture normalized destination splits per entrance at run start
+    const currentSettings = storeStateRef.current.settings;
+    const currentMap = storeStateRef.current.map;
+    const normalizedSplits: Record<string, Record<string, number>> = {};
+    const entranceMarkers = (currentMap.zoneMarkers || []).filter((m) => m.type === 'entrance');
+    for (const ent of entranceMarkers) {
+      normalizedSplits[ent.id] = {
+        ...getEntranceSplit(currentSettings, currentMap, ent.id),
+      };
+    }
+    runDestinationSplitsRef.current = normalizedSplits;
 
     const engine = createSimulation(
       storeStateRef.current.map,
@@ -451,6 +469,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
       defaultSpeedLimit: s.defaultSpeedLimit,
       metersPerUnit: s.metersPerUnit,
       simDurationMin: s.simDurationMin,
+      destinationSplits: s.destinationSplits,
     });
 
     const isMapChanged = storeState.map !== completedMapRef.current;

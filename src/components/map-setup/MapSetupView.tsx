@@ -60,7 +60,9 @@ export const CarPersonIcon: React.FC<{ size?: number; className?: string }> = ({
 import { useTrafficStore, sanitizeDropoffSettings } from '../../context/TrafficStoreContext';
 import { useSimulation } from '../../context/SimulationContext';
 import { VehicleMixControl } from '../common/VehicleMixControl';
+import { DestinationSplitControl } from '../common/DestinationSplitControl';
 import { DropoffBehaviorControl } from '../common/DropoffBehaviorControl';
+import { migrateDropoffShare, sanitizeDestinationSplits } from '../../utils/destinationSplit';
 import {
   RoadSegment,
   ZoneMarker,
@@ -1548,6 +1550,8 @@ export const MapSetupView: React.FC = () => {
 
         // Clamp drop-off settings; old files without them get the defaults
         imported.settings = sanitizeDropoffSettings(imported.settings ?? {});
+        migrateDropoffShare(imported.settings, imported as MapConfig);
+        imported.settings.destinationSplits = sanitizeDestinationSplits(imported.settings.destinationSplits, imported as MapConfig);
 
         if (imported.metersPerPixel !== undefined) {
           if (!imported.settings) imported.settings = {};
@@ -2965,7 +2969,12 @@ export const MapSetupView: React.FC = () => {
               <VehicleMixControl disabled={isSimulationActive} />
             </div>
 
-            {/* Drop-off behavior (dropoffShare, patience, dwell time) */}
+            {/* Destination split control (per entrance drop-off & direct split) */}
+            <div className="pt-1 pb-1">
+              <DestinationSplitControl disabled={isSimulationActive} />
+            </div>
+
+            {/* Drop-off behavior (patience, dwell time) */}
             <DropoffBehaviorControl disabled={isSimulationActive} />
 
             {/* Vehicle geometry & gap */}

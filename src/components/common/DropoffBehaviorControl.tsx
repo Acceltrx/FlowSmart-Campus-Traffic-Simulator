@@ -102,7 +102,6 @@ export const DropoffBehaviorControl: React.FC<DropoffBehaviorControlProps> = ({ 
   const { state, updateSettings } = useTrafficStore();
   const s = state.settings;
 
-  const share = Math.round((s.dropoffShare ?? DEFAULT_SETTINGS.dropoffShare!) * 100);
   const patience = s.dropoffPatienceSec ?? DEFAULT_SETTINGS.dropoffPatienceSec!;
   const spread = s.dropoffPatienceSpreadSec ?? DEFAULT_SETTINGS.dropoffPatienceSpreadSec!;
   const dwellMin = s.dropoffDwellMinSec ?? DEFAULT_SETTINGS.dropoffDwellMinSec!;
@@ -115,16 +114,6 @@ export const DropoffBehaviorControl: React.FC<DropoffBehaviorControlProps> = ({ 
         {disabled && <Lock size={13} className="text-[#6B7A99]" aria-label="Locked while the simulation is running" />}
       </div>
       <div className="flex flex-col space-y-2 bg-[#F5F6F8] border border-[#E2E6EF] rounded-lg p-3">
-        <DropoffNumberField
-          id="dropoff-share-input"
-          label="Cars that drop off (%)"
-          value={share}
-          min={0}
-          max={100}
-          step={5}
-          disabled={disabled}
-          onCommit={(v) => updateSettings({ dropoffShare: v / 100 })}
-        />
         <div className="grid grid-cols-2 gap-2">
           <DropoffNumberField
             id="dropoff-patience-input"

@@ -22,6 +22,7 @@ import { useTrafficStore } from '../../context/TrafficStoreContext';
 import { useSimulation } from '../../context/SimulationContext';
 import { generateActionableInsights, ActionableInsight } from '../../sim/insights';
 import { RunLogEntry, SimulationResult, BottleneckRank } from '../../types/traffic';
+import { formatAllEntranceSplits } from '../../utils/destinationSplit';
 
 // Drop-off statistics for a run. Fields are undefined on runs saved before they existed.
 interface DropStats {
@@ -126,6 +127,19 @@ export const ResultsView: React.FC = () => {
   const runNumber = activeEntry?.runNumber ?? result.runNumber ?? 1;
   const layoutName = activeEntry?.layoutName || result.layoutName || storeState.settings.layoutName || 'Layout A';
   const dropStats = getDropStats(activeEntry ?? undefined, result);
+  const currentDropoffStats = activeEntry?.dropoffStats ?? result.dropoffStats;
+  const currentDirectAssigned = activeEntry?.directAssigned ?? result.directAssigned;
+  const currentSplits = activeEntry ? activeEntry.destinationSplits : storeState.settings.destinationSplits;
+  const splitLines = useMemo(
+    () => formatAllEntranceSplits(currentSplits, storeState.map),
+    [currentSplits, storeState.map]
+  );
+  const hasDropoffStats = Boolean(currentDropoffStats && currentDropoffStats.length > 0);
+
+  const totalSpawned =
+    (activeEntry?.spawnedSticker ?? result.spawnedSticker ?? 0) +
+    (activeEntry?.spawnedNonSticker ?? result.spawnedNonSticker ?? 0) ||
+    ((currentDropoffStats ? currentDropoffStats.reduce((acc, d) => acc + d.assigned, 0) : 0) + (currentDirectAssigned ?? 0));
 
   // PRD 3.3.2 Metric card badge states
   // 1. Total Throughput: Optimal (>=1200), Moderate (900-1199), Critical (<900)
@@ -185,6 +199,17 @@ export const ResultsView: React.FC = () => {
 
   // Export run log as CSV with requested columns (PRD 3.3.5 & prompt specification)
   const handleExportCsv = () => {
+    // Collect all drop-off names across all logged runs and current map
+    const allDropoffNames = Array.from(
+      new Set([
+        ...storeState.map.zoneMarkers.filter((m) => m.type === 'dropoff').map((m) => m.name),
+        ...tableRows.flatMap((r) => {
+          const stats = r.dropoffStats ?? r.result?.dropoffStats ?? [];
+          return stats.map((s) => s.name);
+        }),
+      ])
+    );
+
     const headers = [
       'Layout name',
       'Run number',
@@ -201,6 +226,14 @@ export const ResultsView: React.FC = () => {
       'early_dropoffs',
       'early_dropoff_pct',
       'avg_drop_wait_sec',
+      'direct_assigned',
+      'split_used_per_entrance',
+      ...allDropoffNames.flatMap((zone) => [
+        `"${zone} assigned"`,
+        `"${zone} share_pct"`,
+        `"${zone} dropped_at_zone"`,
+        `"${zone} dropped_early"`,
+      ]),
     ];
 
     const rows = tableRows.map((r) => {
@@ -223,6 +256,29 @@ export const ResultsView: React.FC = () => {
           ? Math.round((d.early / d.total) * 100)
           : '';
 
+      const stats = r.dropoffStats ?? r.result?.dropoffStats;
+      const direct = r.directAssigned ?? r.result?.directAssigned;
+      const splits = r.destinationSplits;
+      const splitLines = formatAllEntranceSplits(splits, storeState.map);
+      const splitUsedStr = splitLines.length > 0 ? splitLines.join('; ') : '';
+
+      const totalSpawned =
+        (r.spawnedSticker ?? r.result?.spawnedSticker ?? 0) +
+        (r.spawnedNonSticker ?? r.result?.spawnedNonSticker ?? 0) ||
+        (stats ? stats.reduce((acc, s) => acc + s.assigned, 0) + (direct ?? 0) : 0);
+
+      const dropoffCells = allDropoffNames.flatMap((zone) => {
+        if (!stats) {
+          return ['', '', '', ''];
+        }
+        const st = stats.find((s) => s.name === zone);
+        if (!st) {
+          return ['', '', '', ''];
+        }
+        const sharePct = totalSpawned > 0 ? `${Math.round((st.assigned / totalSpawned) * 100)}%` : '0%';
+        return [st.assigned, sharePct, st.droppedAtZone, st.droppedEarly];
+      });
+
       return [
         `"${r.layoutName}"`,
         r.runNumber,
@@ -239,6 +295,9 @@ export const ResultsView: React.FC = () => {
         d.early ?? '',
         earlyPct,
         d.avgWait !== undefined ? d.avgWait.toFixed(1) : '',
+        direct !== undefined ? direct : '',
+        splitUsedStr ? `"${splitUsedStr}"` : '',
+        ...dropoffCells,
       ];
     });
 
@@ -491,6 +550,121 @@ export const ResultsView: React.FC = () => {
           </div>
         </div>
 
+        {/* 2c. Drop-off zones & Run details section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Drop-off zones card */}
+          <div className="lg:col-span-2 bg-white border border-[#E2E6EF] rounded-lg p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-baseline justify-between mb-3">
+                <div>
+                  <h2 className="text-[16px] text-[#111C2D] font-medium">Drop-off zones</h2>
+                  <p className="text-[12px] text-[#6B7A99] mt-0.5">
+                    Vehicle distribution across campus drop-offs and direct exits
+                  </p>
+                </div>
+              </div>
+
+              {!hasDropoffStats ? (
+                <div className="py-4 text-[#6B7A99] text-[13px]">
+                  n/a
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[13px]">
+                    <thead>
+                      <tr className="bg-[#F5F6F8] text-[#434651] text-[12px]">
+                        <th className="py-2.5 px-3 font-medium rounded-l-lg">Zone</th>
+                        <th className="py-2.5 px-3 font-medium">Vehicles assigned</th>
+                        <th className="py-2.5 px-3 font-medium">Share of all vehicles</th>
+                        <th className="py-2.5 px-3 font-medium">Dropped off at the zone</th>
+                        <th className="py-2.5 px-3 font-medium rounded-r-lg">Gave up and dropped off early</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E6EF]/60">
+                      {currentDropoffStats!.map((ds) => {
+                        const sharePct = totalSpawned > 0 ? Math.round((ds.assigned / totalSpawned) * 100) : 0;
+                        return (
+                          <tr key={ds.dropoffId} className="hover:bg-gray-50/50">
+                            <td className="py-2.5 px-3 font-medium text-[#111C2D]">{ds.name}</td>
+                            <td className="py-2.5 px-3 text-[#111C2D] tabular-nums">{ds.assigned}</td>
+                            <td className="py-2.5 px-3 text-[#111C2D] tabular-nums">{sharePct}%</td>
+                            <td className="py-2.5 px-3 text-[#111C2D] tabular-nums">{ds.droppedAtZone}</td>
+                            <td className="py-2.5 px-3 text-[#111C2D] tabular-nums">{ds.droppedEarly}</td>
+                          </tr>
+                        );
+                      })}
+                      {/* Last row: Direct to exit */}
+                      <tr className="border-t border-[#E2E6EF] font-medium hover:bg-gray-50/50">
+                        <td className="py-2.5 px-3 text-[#111C2D]">Direct to exit</td>
+                        <td className="py-2.5 px-3 text-[#111C2D] tabular-nums">{currentDirectAssigned ?? 0}</td>
+                        <td className="py-2.5 px-3 text-[#111C2D] tabular-nums">
+                          {totalSpawned > 0 ? Math.round(((currentDirectAssigned ?? 0) / totalSpawned) * 100) : 0}%
+                        </td>
+                        <td className="py-2.5 px-3 text-[#6B7A99]">—</td>
+                        <td className="py-2.5 px-3 text-[#6B7A99]">—</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p className="text-[12px] text-[#6B7A99] mt-3">
+                    Share of all vehicles is what this run produced. The split you set is shown under Run details.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Run details card */}
+          <div className="bg-white border border-[#E2E6EF] rounded-lg p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-baseline justify-between mb-3">
+                <div>
+                  <h2 className="text-[16px] text-[#111C2D] font-medium">Run details</h2>
+                  <p className="text-[12px] text-[#6B7A99] mt-0.5">
+                    Destination split configured per entrance
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col space-y-3">
+                <div>
+                  <span className="text-[12px] text-[#6B7A99] block mb-1">Destination split</span>
+                  {splitLines.length === 0 ? (
+                    <span className="text-[13px] text-[#6B7A99]">n/a</span>
+                  ) : (
+                    <div className="flex flex-col space-y-1.5">
+                      {splitLines.map((line, idx) => (
+                        <div
+                          key={idx}
+                          className="text-[12px] font-mono text-[#111C2D] bg-[#F5F6F8] px-2.5 py-1.5 rounded-lg border border-[#E2E6EF] leading-relaxed break-all"
+                        >
+                          {line}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-2 border-t border-[#E2E6EF] flex flex-col space-y-1.5">
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-[#6B7A99]">Configuration</span>
+                    <span className="text-[#111C2D] font-medium">{layoutName}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-[#6B7A99]">Run number</span>
+                    <span className="text-[#111C2D] font-medium">Run {runNumber}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-[#6B7A99]">Seed</span>
+                    <span className="text-[#111C2D] font-mono tabular-nums">
+                      {activeEntry?.seed ?? result.seed ?? 'N/A'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* 3. Bottleneck Analysis Panel (Consistent 16px padding, clean border) */}
         <div className="bg-white border border-[#E2E6EF] rounded-lg p-4 flex flex-col">
           <div className="flex items-baseline justify-between mb-3">
@@ -600,6 +774,7 @@ export const ResultsView: React.FC = () => {
                   <th className="py-2.5 px-3 font-medium">Run</th>
                   <th className="py-2.5 px-3 font-medium">Spawn rates (veh/min)</th>
                   <th className="py-2.5 px-3 font-medium">Sticker share</th>
+                  <th className="py-2.5 px-3 font-medium">Destination split</th>
                   <th className="py-2.5 px-3 font-medium">Throughput</th>
                   <th className="py-2.5 px-3 font-medium">Avg wait</th>
                   <th className="py-2.5 px-3 font-medium">Avg transit</th>
@@ -612,7 +787,7 @@ export const ResultsView: React.FC = () => {
               <tbody className="divide-y divide-[#E2E6EF]/60">
                 {tableRows.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="py-6 text-center text-[#6B7A99] text-[12px]">
+                    <td colSpan={12} className="py-6 text-center text-[#6B7A99] text-[12px]">
                       No previous evaluation runs logged.
                     </td>
                   </tr>
@@ -648,6 +823,22 @@ export const ResultsView: React.FC = () => {
                               Actual: {log.spawnedSticker ?? log.result?.spawnedSticker ?? 0} sticker / {log.spawnedNonSticker ?? log.result?.spawnedNonSticker ?? 0} non-sticker
                             </div>
                           )}
+                        </td>
+                        <td className="py-3 px-3 text-[#111C2D]">
+                          {(() => {
+                            const splits = log.destinationSplits;
+                            const lines = formatAllEntranceSplits(splits, storeState.map);
+                            if (lines.length === 0) return <span className="text-[12px] text-[#6B7A99]">n/a</span>;
+                            return (
+                              <div className="flex flex-col space-y-0.5 max-w-[210px]">
+                                {lines.map((l, i) => (
+                                  <div key={i} className="text-[11px] font-mono text-[#434651] truncate" title={l}>
+                                    {l}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-3 px-3 font-medium text-[#111C2D]">
                           {log.throughput.toLocaleString()} veh/hr

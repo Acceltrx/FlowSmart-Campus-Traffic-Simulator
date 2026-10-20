@@ -207,6 +207,10 @@ export interface EntranceValidationSummary {
   nonStickerOnly: boolean;
   truncated: boolean;
   error?: string;
+  reachable?: {
+    sticker: { dropoffIds: string[]; direct: boolean };
+    nonSticker: { dropoffIds: string[]; direct: boolean };
+  };
 }
 
 export interface RouteValidationResult {
@@ -333,6 +337,10 @@ export class DrawnPathRouter implements Router {
           nonStickerOnly: false,
           truncated: false,
           error: errorMsg,
+          reachable: {
+            sticker: { dropoffIds: [], direct: false },
+            nonSticker: { dropoffIds: [], direct: false },
+          },
         });
         overallValid = false;
         if (!firstError) firstError = errorMsg;
@@ -519,6 +527,7 @@ export class DrawnPathRouter implements Router {
         nonStickerOnly,
         truncated: isTruncatedSticker || isTruncatedNonSticker,
         error: entranceError,
+        reachable: this.reachableDestinations(entrance.id),
       });
     }
 
@@ -542,17 +551,127 @@ export class DrawnPathRouter implements Router {
   }
 
   /**
+   * Returns drop-off zone IDs and direct route availability reachable from an entrance per vehicle class.
+   */
+  public reachableDestinations(entranceId: string): {
+    sticker: { dropoffIds: string[]; direct: boolean };
+    nonSticker: { dropoffIds: string[]; direct: boolean };
+  } {
+    const data = this.routesByEntrance.get(entranceId);
+    if (!data) {
+      return {
+        sticker: { dropoffIds: [], direct: false },
+        nonSticker: { dropoffIds: [], direct: false },
+      };
+    }
+
+    const stickerDropoffSet = new Set<string>();
+    for (const r of data.stickerWithDropoff) {
+      if (r.dropoffId) stickerDropoffSet.add(r.dropoffId);
+    }
+    const nonStickerDropoffSet = new Set<string>();
+    for (const r of data.nonStickerWithDropoff) {
+      if (r.dropoffId) nonStickerDropoffSet.add(r.dropoffId);
+    }
+
+    const dropoffMarkers = this.mapConfig.zoneMarkers.filter((m) => m.type === 'dropoff');
+    const stickerDropoffIds: string[] = [];
+    const nonStickerDropoffIds: string[] = [];
+
+    for (const m of dropoffMarkers) {
+      if (stickerDropoffSet.has(m.id)) {
+        stickerDropoffIds.push(m.id);
+      }
+      if (nonStickerDropoffSet.has(m.id)) {
+        nonStickerDropoffIds.push(m.id);
+      }
+    }
+
+    return {
+      sticker: {
+        dropoffIds: stickerDropoffIds,
+        direct: data.stickerDirect.length > 0,
+      },
+      nonSticker: {
+        dropoffIds: nonStickerDropoffIds,
+        direct: data.nonStickerDirect.length > 0,
+      },
+    };
+  }
+
+  /**
+   * Chooses destination (dropoff or direct) using cumulative distribution of weights from split
+   * across reachable options for the vehicle class, with a single random roll in [0, 1).
+   */
+  public chooseDestination(
+    entranceId: string,
+    isSticker: boolean,
+    split: Record<string, number>,
+    roll: number
+  ): { usesDropoff: boolean; dropoffId?: string } | null {
+    const reachable = this.reachableDestinations(entranceId);
+    const classReachable = isSticker ? reachable.sticker : reachable.nonSticker;
+
+    // Keys in fixed order: drop-offs in map order, then 'direct'
+    const reachableKeys: string[] = [];
+    for (const dId of classReachable.dropoffIds) {
+      reachableKeys.push(dId);
+    }
+    if (classReachable.direct) {
+      reachableKeys.push('direct');
+    }
+
+    if (reachableKeys.length === 0) {
+      return null;
+    }
+
+    // Weights from split (missing = 0)
+    const weights: number[] = reachableKeys.map((k) => {
+      const w = split[k];
+      return typeof w === 'number' && Number.isFinite(w) && w > 0 ? w : 0;
+    });
+
+    const totalWeight = weights.reduce((acc, w) => acc + w, 0);
+
+    let normalizedWeights: number[];
+    if (totalWeight <= 0) {
+      const equalShare = 1 / reachableKeys.length;
+      normalizedWeights = reachableKeys.map(() => equalShare);
+    } else {
+      normalizedWeights = weights.map((w) => w / totalWeight);
+    }
+
+    let cumulative = 0;
+    let chosenKey = reachableKeys[reachableKeys.length - 1];
+
+    for (let i = 0; i < reachableKeys.length; i++) {
+      cumulative += normalizedWeights[i];
+      if (roll < cumulative || i === reachableKeys.length - 1) {
+        chosenKey = reachableKeys[i];
+        break;
+      }
+    }
+
+    if (chosenKey === 'direct') {
+      return { usesDropoff: false };
+    }
+    return { usesDropoff: true, dropoffId: chosenKey };
+  }
+
+  /**
    * Router implementation conforming to the Router interface:
    * route(vehicle, graph) -> edge list
    * Picks one route uniformly at random from the eligible set for that entrance and class.
-   * If pool of preferred kind is empty, falls back to the other kind of the SAME class.
-   * Never falls back to the other vehicle class.
+   * If targetDropoffId is given, the pool is only the routes of the vehicle's class with that dropoffId,
+   * with NO fallback to direct routes or other drop-offs; returns null if empty.
+   * If targetDropoffId is not given, previous behavior is preserved.
    */
   public route(
     vehicle: { isSticker: boolean; usesDropoff: boolean },
     graph: RoadGraph,
     entranceMarkerId: string,
-    targetExitId?: string
+    targetExitId?: string,
+    targetDropoffId?: string
   ): {
     routeEdges: GraphEdge[];
     routePoints: Point[];
@@ -563,28 +682,36 @@ export class DrawnPathRouter implements Router {
     if (!entranceData) return null;
 
     let pool: DrawnRoute[];
-    if (vehicle.isSticker) {
-      if (vehicle.usesDropoff) {
-        pool = entranceData.stickerWithDropoff;
-        if (pool.length === 0) {
-          pool = entranceData.stickerDirect;
-        }
-      } else {
-        pool = entranceData.stickerDirect;
-        if (pool.length === 0) {
-          pool = entranceData.stickerWithDropoff;
-        }
-      }
+
+    if (targetDropoffId !== undefined) {
+      const candidates = vehicle.isSticker
+        ? entranceData.stickerWithDropoff
+        : entranceData.nonStickerWithDropoff;
+      pool = candidates.filter((r) => r.dropoffId === targetDropoffId);
     } else {
-      if (vehicle.usesDropoff) {
-        pool = entranceData.nonStickerWithDropoff;
-        if (pool.length === 0) {
-          pool = entranceData.nonStickerDirect;
+      if (vehicle.isSticker) {
+        if (vehicle.usesDropoff) {
+          pool = entranceData.stickerWithDropoff;
+          if (pool.length === 0) {
+            pool = entranceData.stickerDirect;
+          }
+        } else {
+          pool = entranceData.stickerDirect;
+          if (pool.length === 0) {
+            pool = entranceData.stickerWithDropoff;
+          }
         }
       } else {
-        pool = entranceData.nonStickerDirect;
-        if (pool.length === 0) {
+        if (vehicle.usesDropoff) {
           pool = entranceData.nonStickerWithDropoff;
+          if (pool.length === 0) {
+            pool = entranceData.nonStickerDirect;
+          }
+        } else {
+          pool = entranceData.nonStickerDirect;
+          if (pool.length === 0) {
+            pool = entranceData.nonStickerWithDropoff;
+          }
         }
       }
     }
