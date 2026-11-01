@@ -41,14 +41,14 @@
 
 ## Overview
 
-School campuses are small road networks with a very uneven load. Hundreds of vehicles arrive within a narrow morning window, most of them need to stop at a drop-off zone, and the road space available for queuing is limited. When the queue outgrows the road, it spills into the surrounding streets.
+School campuses are small road networks with a very uneven load. Hundreds of vehicles arrive within a narrow morning window, many of them need to stop at a drop-off zone, and the road space available for queuing is limited. When the queue outgrows the road, it spills into the surrounding streets.
 
 **FlowSmart** lets a school administrator, student, or researcher:
 
 - **Draw** the campus road network on a blank grid or over a photo or floor plan of the real campus.
-- **Configure** entrances, exits, drop-off zones, lane counts, one-way rules, sticker-only and non-sticker-only roads, arrival rates, and driver behavior.
+- **Configure** entrances, exits, drop-off zones, lane counts, one-way rules, sticker-only and non-sticker-only roads, arrival rates, where each entrance's cars go, and driver behavior.
 - **Simulate** the morning rush with individually modeled vehicles that accelerate, follow one another, yield at merges, stop to drop off students, and leave.
-- **Measure** the outcome with throughput, wait time, transit time, queue length, and flow efficiency.
+- **Measure** the outcome with throughput, wait time, transit time, queue length, flow efficiency, and per-drop-off statistics.
 - **Compare** layouts by running them repeatedly and exporting the results as a PDF report or CSV run log.
 
 The goal is to let a campus test a road or drop-off redesign on a screen before changing anything on the ground.
@@ -74,15 +74,19 @@ FlowSmart is themed around **United Nations Sustainable Development Goal 11: Sus
 
 | Area | What it does |
 |---|---|
-| **Map setup** | Draw roads as polylines, split roads to make intersections, and place Entrance, Exit, and Drop-off markers. Roads snap to existing road ends. |
-| **Reference image overlay** | Attach a PNG or JPG (200 KB to 5 MB) of the real campus and trace over it. The image is a visual guide only and is never saved or exported. |
+| **Map setup** | Draw roads as polylines, split roads to make intersections, edit roads with draggable handles, and place Entrance, Exit, and Drop-off markers (markers can be dragged or nudged with the arrow keys). Roads snap to existing road ends. |
+| **Reference image overlay** | Attach a PNG or JPG (200 KB to 5 MB, at least 1280 x 720 px) of the real campus and trace over it. The image is a visual guide only and is never saved or exported. |
 | **Scale calibration** | Click two points on the image and enter the real distance, or choose a grid scale. Every length, speed, gap, and capacity is derived from this scale. |
 | **Road rules** | Per road: one-way or two-way (with reverse), number of lanes, and access type (Shared, Sticker-only, Non-sticker-only). |
-| **Traffic controls** | Per-entrance arrival rate, sticker share, speed limit, drop-off share, driver patience, drop-off dwell time, vehicle length, and standstill gap. |
-| **Live simulation** | Real-time canvas with zoom, pan, pause, stop, and adjustable speed (0.5x to 5x). Optional congestion heatmap. |
+| **Vehicle mix** | Control the share of arriving cars that carry a campus sticker. Sticker cars never use non-sticker-only roads, and non-sticker cars never use sticker-only roads. |
+| **Destination split** | Per entrance, set the percentage of cars that go to each drop-off zone or straight to an exit (Direct to exit). Shown as collapsible sections, with Balance evenly and Apply to all entrances shortcuts. |
+| **Drop-off behavior** | Set driver patience, patience spread, and the minimum and maximum drop-off time. |
+| **Traffic controls** | Per-entrance arrival rate, map-wide speed limit (5, 10, or 15 km/h), vehicle length, and standstill gap. |
+| **Layouts** | Start a **New layout** after a run to keep your scale, reference image, and run history while you redraw. Layouts are named Layout A, B, C, and so on, so runs can be told apart in the run log. |
+| **Live simulation** | Real-time canvas with zoom, pan, pause, stop, and adjustable speed (0.5x to 5x). Optional congestion heatmap. Press Space over the map to start, pause, or resume. |
 | **Live alerts** | Configurable warnings when a road stays saturated or vehicles wait too long, which clear automatically on recovery. |
-| **Results dashboard** | Five headline metrics with color-coded ratings, drop-off statistics, ranked bottlenecks, and generated recommendations. |
-| **Run log and exports** | Every finished run is logged. Export a landscape PDF report, a CSV run log, or the full scenario as JSON. |
+| **Results dashboard** | Five headline metrics with color-coded ratings, drop-off statistics, a per-drop-off table, ranked bottlenecks, and generated recommendations. |
+| **Run log and exports** | Every finished run is logged with the destination split it used. Export a landscape PDF report, a CSV run log, or the full scenario as JSON. |
 | **Built-in help** | Each of the three screens has a plain-language guide inside the app. |
 | **Edge-case handling** | Detects and explains maps with no entrance, no exit, no valid path, zero arrivals, blocked exits, and gridlock. |
 
@@ -107,11 +111,13 @@ A map must have **at least one entrance and one exit connected by roads** before
 
 ### Stage 2: Simulation
 
-Each run starts from a **seed** (a number that fixes the sequence of random choices). Vehicles are created at entrances, assigned a route, and then driven forward in small time steps until the run ends. The engine is a pure TypeScript module with no React or DOM dependencies, so the same code runs in the browser and in the automated test harness.
+Each run starts from a **seed** (a number that fixes the sequence of random choices). Vehicles are created at entrances, each is given a destination and a route, and then driven forward in small time steps until the run ends. The engine is a pure TypeScript module with no React or DOM dependencies, so the same code runs in the browser and in the automated test harness.
+
+Settings are locked while a run is in progress. If the map is edited during a run, the run keeps using the old layout and the changes apply to the next run.
 
 ### Stage 3: Results
 
-When the run completes, the engine produces a result object. The Results screen turns it into metric cards, a bottleneck ranking, and recommendations. The run is appended to the run log together with the seed, the arrival rates, and the sticker share that produced it.
+When the run completes, the engine produces a result object. The Results screen turns it into metric cards, a drop-off table, a bottleneck ranking, and recommendations. The run is appended to the run log together with the seed, the arrival rates, the sticker share, and the destination split that produced it.
 
 ---
 
@@ -130,23 +136,34 @@ When the run completes, the engine produces a result object. The Results screen 
 
 ### Vehicle arrivals
 
-Vehicles arrive at each entrance as a **Poisson process**: the gap between consecutive arrivals is drawn from an exponential distribution whose mean is `60 / rate` seconds. This reproduces the natural clustering of real traffic, where cars sometimes arrive in bunches and sometimes in gaps, rather than at perfectly even intervals.
+Vehicles arrive at each entrance as a **Poisson process**: the gap between consecutive arrivals is drawn from an exponential distribution whose mean is `60 / rate` seconds. This reproduces the natural clustering of real traffic, where cars sometimes arrive in bunches and sometimes in gaps, rather than at perfectly even intervals. An entrance set to 0 veh/min produces no arrivals.
 
 At arrival, each vehicle is randomly given:
 
-- **Sticker or non-sticker status**, according to the configured sticker share (default 70% sticker).
-- **A drop-off requirement**, according to the configured drop-off share (default 100%).
+- **Sticker or non-sticker status**, according to the configured sticker share (default 70% sticker). If an entrance connects only to sticker-only roads (or only to non-sticker-only roads), only that class enters there.
+- **A destination**, according to that entrance's destination split: one of the drop-off zones, or Direct to exit.
 
-If the first stretch of road at the entrance does not have enough free space for a new vehicle (less than the standstill gap), the arrival is skipped and counted as a **blocked spawn**. If no legal route exists for that vehicle, it is counted as an **unroutable spawn**.
+If the first stretch of road at the entrance does not have enough free space for a new vehicle (less than the standstill gap), the arrival is skipped and counted as a **blocked spawn**. If no legal destination or route exists for that vehicle, it is counted as an **unroutable spawn**.
+
+### Destination split
+
+Each entrance has its own split. The percentages cover all cars from that entrance, including a **Direct to exit** row for cars that do not drop anyone off, so the split should add up to 100%.
+
+- If a split does not total 100%, the shares are scaled to 100% when the run starts. If every share is 0, the cars are spread equally.
+- If a drop-off cannot be reached from an entrance by a given vehicle class (for example because of a sticker-only road or a one-way road), that share is redistributed among the destinations the vehicle can reach.
+- With no drop-off on the map, every car goes direct to an exit.
+- Sticker and non-sticker cars use the same split. Separate splits are not supported yet.
+- By default, every drop-off gets an equal share and Direct to exit gets 0%.
+- Splits are saved with the map. Maps saved with the older single "cars that drop off" percentage are converted to splits automatically.
 
 ### Routing: drawn-path following
 
 FlowSmart does **not** use shortest-path routing (Dijkstra or A*). Instead, vehicles follow the roads the user actually drew:
 
-1. For each entrance, the router enumerates **loop-free paths** from the entrance to a drop-off and from the drop-off to an exit (or directly to an exit for vehicles that do not drop off). A path may not revisit a node, except that the drop-off node joins the two legs.
+1. For each entrance, the router enumerates **loop-free paths** from the entrance to each drop-off and from that drop-off to an exit, and also from the entrance directly to an exit for cars that do not drop off. A path may not revisit a node, except that the drop-off node joins the two legs.
 2. Paths are filtered by **access rules**. A sticker-only road is excluded from non-sticker routes, and a non-sticker-only road is excluded from sticker routes. A vehicle class never falls back to routes of the other class.
-3. Each entrance keeps at most **200 routes** per vehicle class (the ones with the fewest road segments).
-4. Each new vehicle is assigned **one route chosen uniformly at random** from its eligible pool.
+3. Each entrance keeps at most **200 routes** per vehicle class and trip type (with drop-off, or direct), keeping the ones with the fewest road segments.
+4. Each new vehicle is assigned **one route chosen uniformly at random** from the eligible routes to its destination.
 
 This spreads traffic across every legal path on the map, which is what lets the simulation reveal which roads become overloaded.
 
@@ -156,14 +173,14 @@ Vehicles use an **Intelligent Driver Model (IDM)** style controller:
 
 | Parameter | Value | Meaning |
 |---|---|---|
-| Desired speed | Road speed limit (5, 10, or 15 km/h) | Target free-flow speed |
+| Desired speed | Map speed limit (5, 10, or 15 km/h) | Target free-flow speed |
 | Acceleration `a` | 1.5 m/s² | Maximum comfortable acceleration |
 | Deceleration `b` | 2.0 m/s² | Comfortable braking |
 | Time headway `T` | 1.2 s | Preferred time gap to the vehicle ahead |
 | Standstill gap `s0` | 2.0 m (configurable) | Minimum bumper-to-bumper gap when stopped |
 | Vehicle length | 4.5 m (configurable) | Used for spacing and for rendering |
 
-Each vehicle looks up to **80 m** ahead along its own route to find a leader, including across road boundaries. A hard overlap guard guarantees no vehicle ever passes through or closer than the standstill gap to the one in front. There is no overtaking.
+Each vehicle looks up to **80 m** ahead along its own route to find a leader, including across road boundaries. A hard overlap guard keeps every vehicle at least the standstill gap behind the one in front. There is no overtaking.
 
 ### Merging
 
@@ -180,9 +197,12 @@ The drop-off zone is the most important part of the model, because it is usually
 
 1. A vehicle that needs a drop-off brakes toward a stop line so that its **center** sits on the drop-off marker.
 2. It then **dwells** for a random duration, **uniformly distributed between 20 and 60 seconds** by default.
-3. The zone holds at most **2 vehicles at once**. Others queue behind. Only the single slot right behind the marker may begin its dwell while queued behind a dwelling vehicle.
-4. **Patience:** if a vehicle is held near the zone (within 40 m, nearly stopped) for longer than its patience, it gives up and **drops off where it is**. Patience is `30 s` plus a random `0 to 20 s`, so drivers do not all give up at the same moment. These are recorded as **early drop-offs**.
+3. Each zone holds at most **2 vehicles dwelling at once**. Others queue behind. Only the single slot right behind the marker may begin its dwell while queued behind a dwelling vehicle.
+4. **Patience:** if a vehicle is held near the zone (within 40 m, nearly stopped) for longer than its patience, it gives up and **drops off where it is**. Patience is `30 s` plus a random `0 to 20 s` by default, so drivers do not all give up at the same moment. The car still dwells for the usual drop-off time, but because it is not at the zone it does not use one of the zone's 2 slots. These are recorded as **early drop-offs**.
 5. After the dwell, the vehicle continues to its exit.
+
+> [!NOTE]
+> The patience values are placeholders, not measurements. If a run shows a large share of early drop-offs, try a longer patience or a different destination split before drawing conclusions.
 
 ### Segment capacity and congestion
 
@@ -234,6 +254,9 @@ A vehicle accumulates wait time whenever it is in the **queued** state: moving s
 | **Total drop-offs** | Vehicles whose drop-off started during the run. |
 | **Early drop-offs** | Of those, vehicles that ran out of patience and dropped off away from the zone. A high count means the drop-off cannot absorb the arrival volume. |
 | **Average wait at drop-off** | Mean time vehicles were held up near the zone before their drop-off began. |
+| **Drop-off zones table** | One row per drop-off: cars sent there, their share of all cars in the run, cars that dropped off at the zone, and cars that gave up and dropped off early. A final **Direct to exit** row counts cars that never went to a drop-off. |
+
+The shares in the table are what the run actually produced, so they can differ a few points from the split you set, because each car's destination is drawn at random. Cars still driving when the run ended are not counted as dropped off.
 
 ### Bottleneck ranking
 
@@ -253,8 +276,9 @@ Each entry also shows the peak queue as a percentage of that segment's storage c
 |---|---|
 | **Seed** | The random seed of the run, saved for traceability. |
 | **Spawned sticker / non-sticker** | The actual number of each class that entered, which differs slightly from the configured share because each vehicle is drawn at random. |
+| **Destination split used** | The split for each entrance, shown in the run details (for example `Gate 1: D1 20 · D2 40 · D3 40 · Direct 0`). Runs saved before splits existed show n/a. |
 | **Blocked spawns** | Arrivals skipped because the entrance had no room. A sign of spillback at the gate. |
-| **Unroutable spawns** | Arrivals with no legal route. A sign of conflicting one-way or access rules. |
+| **Unroutable spawns** | Arrivals with no legal destination or route. A sign of conflicting one-way or access rules. |
 | **Unfinished vehicles** | Vehicles still on campus at the end of the run. |
 
 ### Live metrics versus final metrics
@@ -271,12 +295,12 @@ While a run is in progress, the Simulation screen shows live approximations. The
 
 Alerts appear during the run and clear on their own. All thresholds are adjustable.
 
-| Setting | Default | Meaning |
-|---|---|---|
-| Wait threshold | 120 s | Delay that triggers a critical alert |
-| Saturation threshold | 80% | Utilization that counts as saturated |
-| Duration threshold | 30 s | How long saturation must last before the alert appears |
-| Recovery threshold | 60% | Utilization the road must fall back to before the alert clears |
+| Setting | Default | Allowed range | Meaning |
+|---|---|---|---|
+| Wait threshold | 120 s | 10 to 600 s | Delay that triggers a critical alert |
+| Saturation threshold | 80% | 50 to 100% | Utilization that counts as saturated |
+| Duration threshold | 30 s | 5 to 180 s | How long saturation must last before the alert appears |
+| Recovery threshold | 60% | 20 to 80% | Utilization the road must fall back to before the alert clears |
 
 ---
 
@@ -301,19 +325,20 @@ The insights are rule-based and deterministic. The application does not use any 
 | Setting | Default | Allowed range |
 |---|---|---|
 | Simulation length | 30 min | Configurable |
-| Speed limit | 10 km/h | 5, 10, or 15 km/h |
-| Arrival rate | 18 veh/min (Gate 1), 12 veh/min (Gate 2) | 0 to 120 veh/min per entrance |
+| Speed limit | 10 km/h | 5, 10, or 15 km/h (map-wide) |
+| Arrival rate | 3 veh/min per entrance in the sample map | 0 to 120 veh/min per entrance |
 | Sticker share | 70% | 0 to 100% |
-| Cars that drop off | 100% | 0 to 100% |
+| Destination split | Equal share across all drop-offs, Direct to exit 0% | 0 to 100% per row, per entrance |
 | Driver patience | 30 s | 5 to 300 s |
 | Patience spread | 20 s | 0 to 120 s |
-| Drop-off dwell time | 20 to 60 s | 5 to 300 s |
+| Drop-off time | 20 to 60 s | 5 to 300 s |
 | Vehicle length | 4.5 m | 1 to 20 m |
 | Standstill gap | 2.0 m | 0.5 to 10 m |
-| Default map scale | 0.2 m per canvas unit | Calibrated by the user |
+| Grid scale (no image) | 1 cell = 10 m | 0.5 to 200 m per cell |
+| Sample map scale | 0.2 m per canvas unit | Calibrated by the user |
 | Lane width (drawing) | 3.0 m | Fixed |
 
-The built-in **sample map** is a 14-segment campus with two entrances (Gate 1 main, Gate 2 east), two exits (north and west), and one elementary drop-off loop. It includes shared, sticker-only, and non-sticker-only roads so that every feature can be tried immediately.
+The built-in **sample map** is the DBTC campus baseline, **Layout A**: 8 one-way road segments, two entrances (Gate 1 and Gate 2), two drop-off zones, and one exit. Gate 1 can reach both drop-offs, while Gate 2 can reach only Drop-off #2 because of the one-way roads on that side. It also includes shared and sticker-only roads, so the main features can be tried immediately. The matching campus photo is not bundled, so the reference image is not part of the sample.
 
 ---
 
@@ -333,6 +358,8 @@ npm install
 # 2. Start the development server (http://localhost:3000)
 npm run dev
 ```
+
+No API key or environment variables are needed to run FlowSmart. (`.env.example` and `metadata.json` are leftovers from the Google AI Studio template and are not used by the app.)
 
 ### Other commands
 
@@ -356,12 +383,13 @@ FlowSmart is a static single-page application and deploys to any static host (fo
 
 ### Quick tour
 
-1. Open **Map Setup** and choose **Load sample map**, or **Start blank layout** to draw your own.
-2. Set the **map scale** before drawing, because all distances depend on it.
-3. Draw roads, then place at least one **Entrance** and one **Exit** (and a **Drop-off** zone if vehicles should stop).
-4. Adjust traffic settings in the right panel, then choose **Save and go to simulation**.
-5. Press **Run simulation**. Turn on the **Heatmap** to see where roads fill up.
-6. When the run ends, press **View results**. Change the layout and run again to compare.
+1. Open **Map setup** and choose **Load sample map**, or **Start blank layout** to draw your own.
+2. Set the **map scale** before drawing, because all distances depend on it. Optionally attach a reference image first.
+3. Draw roads, then place at least one **Entrance** and one **Exit** (and **Drop-off** zones if vehicles should stop).
+4. Set road rules (direction, access type, lanes) with the **Select** tool.
+5. Adjust traffic settings in the right panel: vehicle mix, **destination split**, drop-off behavior, and spawn rates. Then choose **Save and go to simulation**.
+6. Press **Run simulation**. Turn on the **Heatmap** to see where roads fill up.
+7. When the run ends, press **View results**. Use **New layout** or edit the map, then run again to compare.
 
 > [!TIP]
 > Because arrivals are random, two runs of the same layout will differ slightly. Run each layout several times and compare the averages in the run log rather than relying on a single run.
@@ -383,7 +411,7 @@ FlowSmart/
     ├── sim/                      Pure simulation engine (no React or DOM)
     │   ├── engine.ts             Time stepping, spawning, car following, merging,
     │   │                         drop-off, gridlock, metrics
-    │   ├── graph.ts              Road graph builder and drawn-path router
+    │   ├── graph.ts              Road graph builder, drawn-path router, destination chooser
     │   ├── insights.ts           Rule-based recommendation generator
     │   ├── harness.ts            Console test harness (spacing and access invariants)
     │   ├── types.ts              Engine-level types
@@ -396,10 +424,13 @@ FlowSmart/
     │   ├── canvas/               Live simulation canvas and heatmap
     │   ├── views/                Results dashboard and placeholders
     │   ├── layout/               Top bar, side panels, in-app help content
-    │   └── common/               Help modal, error boundary, controls, scale bar
+    │   └── common/               Help modal, error boundary, scale bar, and the
+    │                             vehicle mix, destination split, and drop-off
+    │                             behavior controls
     ├── hooks/
     │   └── useWireTool.ts        Road drawing tool
-    └── utils/                    Geometry, scale, image handling, sample map
+    └── utils/                    Geometry, scale, image handling, destination split
+                                  helpers, sample map
 ```
 
 ### Technology stack
@@ -417,11 +448,13 @@ FlowSmart/
 
 ## Data, Privacy and Reproducibility
 
-- **No server and no accounts.** Maps, settings, and the run log are stored in the browser's **LocalStorage**. Nothing is transmitted anywhere.
+- **No server and no accounts.** Maps, settings, and the run log are stored in the browser's **LocalStorage**. Nothing is transmitted anywhere, and no external AI service is used.
 - **Reference images are never stored or exported.** They exist only for the current browser session, so reattach the image after reloading the page.
-- **Portable scenarios.** Use **Export map** to save the full scenario (map and settings) as a JSON file, and import it later or in another browser.
+- **Portable scenarios.** Use **Export map** to save the full scenario (map and settings, including the destination splits) as a JSON file, and import it later or in another browser.
 - **Crash recovery.** If the interface hits an unexpected error, an error screen offers **Export map JSON** so work is never lost.
-- **Traceable runs.** Every run stores its seed, arrival rates, and sticker share. The CSV run log includes all of these alongside the metrics.
+- **Traceable runs.** Every run stores its seed, arrival rates, sticker share, and destination split. The CSV run log and the PDF report include these alongside the metrics and the Drop-off zones table.
+- **Storage versioning.** Stored data is tagged with a version (currently `1.4.0`). Older saved maps are migrated on load, and any embedded reference images from older versions are dropped.
+- **Reset.** **Reset all data** erases the saved map, settings, and run history. **New layout** clears only the roads and markers and keeps the scale, reference image, and run history.
 
 ---
 
@@ -448,7 +481,9 @@ FlowSmart is intentionally scoped. These are the main simplifications to keep in
 - **No traffic lights or pedestrian crossings.** Conflicts are resolved by yielding rules, and pedestrians are not modeled.
 - **Passenger cars only.** There is a single vehicle type. Buses, tricycles, and motorcycles are not modeled separately.
 - **No overtaking or lane changing.** Each vehicle follows the single route assigned to it.
+- **One destination split per entrance.** Sticker and non-sticker cars share it, and the split does not change during a run.
 - **Constant arrival rate.** Arrivals are random but follow a fixed average rate for the whole run, with no built-in rush-hour ramp.
+- **Drop-off behavior is not measured.** The patience and drop-off time values are placeholders that should be replaced with campus observations or survey results.
 - **Emissions are not computed.** Wait time is reported as a proxy for idling, but fuel use and emissions are not estimated.
 - **Not calibrated against field data.** Parameter defaults are sensible starting values, not measurements from a specific campus.
 
