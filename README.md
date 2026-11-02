@@ -338,7 +338,7 @@ The insights are rule-based and deterministic. The application does not use any 
 | Sample map scale | 0.2 m per canvas unit | Calibrated by the user |
 | Lane width (drawing) | 3.0 m | Fixed |
 
-The built-in **sample map** is the DBTC campus baseline, **Layout A**: 8 one-way road segments, two entrances (Gate 1 and Gate 2), two drop-off zones, and one exit. Gate 1 can reach both drop-offs, while Gate 2 can reach only Drop-off #2 because of the one-way roads on that side. It also includes shared and sticker-only roads, so the main features can be tried immediately. The matching campus photo is not bundled, so the reference image is not part of the sample.
+The built-in **sample map** is a small made-up layout (**Layout A**) and does not represent the real DBTC campus. It exists only to make the tool easier to understand and try. It has 8 one-way road segments, two entrances (Gate 1 and Gate 2), two drop-off zones, and one exit. Gate 1 can reach both drop-offs, while Gate 2 can reach only Drop-off #2 because of the one-way roads on that side. It also includes shared and sticker-only roads, so the main features can be tried immediately. No reference image is bundled with the sample.
 
 ---
 
