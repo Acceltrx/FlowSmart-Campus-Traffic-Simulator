@@ -13,6 +13,7 @@
 
 import { SimulationResult, MapConfig } from '../types/traffic';
 import { distance } from '../utils/mapGeometry';
+import { getQueueStatus, getSegmentUsageStatus } from '../utils/status';
 
 export interface ActionableInsight {
   id: string;
@@ -52,22 +53,26 @@ export function generateActionableInsights(
         id: 'insight-second-bay',
         category: 'Drop-off',
         title: 'Add a second loading bay',
-        description: `The drop-off zone (${topBottleneck.segmentName}) is the primary bottleneck on campus. Providing a second parallel unloading bay allows multiple vehicles to disembark students simultaneously and eliminates vehicle tailback.`,
+        description: `${topBottleneck.segmentName} is the main bottleneck on campus. Adding a second unloading bay lets two cars drop off at the same time and shortens the line of cars.`,
       });
     } else {
       insights.push({
         id: 'insight-stagger-dropoff',
         category: 'Timing',
         title: 'Stagger drop-off windows',
-        description: `The drop-off zone (${topBottleneck.segmentName}) is the campus peak bottleneck. Separating arrival times between elementary and high school grade levels smooths arrival distribution and prevents drop-off loop saturation.`,
+        description: `${topBottleneck.segmentName} is the busiest spot on campus. Spreading out arrival times stops the drop-off loop from backing up.`,
       });
     }
   }
 
-  // Rule 2: A segment above 80% utilization while a parallel path sits under 60% -> 'Reroute flow to the underused road'
+  // Rule 2: A segment at >= 80% usage while a parallel path sits under 60% -> 'Reroute flow to the underused road'
   const segUtils = result.segmentUtilization || [];
-  const busySegment = segUtils.find((s) => s.utilizationPct >= 80);
-  const quietSegment = segUtils.find((s) => s.utilizationPct < 60 && s.segmentId !== busySegment?.segmentId);
+  const busySegment = segUtils.find((s) => getSegmentUsageStatus(s.utilizationPct).level === 'bad');
+  const quietSegment = segUtils.find(
+    (s) =>
+      getSegmentUsageStatus(s.utilizationPct).level === 'good' &&
+      s.segmentId !== busySegment?.segmentId
+  );
 
   if (busySegment && quietSegment) {
     const busyName =
@@ -83,11 +88,11 @@ export function generateActionableInsights(
       id: 'insight-reroute-parallel',
       category: 'Circulation',
       title: 'Reroute flow to the underused road',
-      description: `${busyName} reached ${busySegment.utilizationPct}% utilization while alternative route ${quietName} operated at ${quietSegment.utilizationPct}%. Designating directional bypasses will balance corridor loads.`,
+      description: `${busyName} reached ${busySegment.utilizationPct}% of its capacity while ${quietName} only used ${quietSegment.utilizationPct}%. Guiding some cars onto the quieter road will balance traffic.`,
     });
   }
 
-  // Rule 3: Queue at an entrance exceeds 10 vehicles -> 'Add a lane or a second gate at <name>'
+  // Rule 3: Line of cars at an entrance exceeds 10 vehicles -> 'Add a lane or a second gate at <name>'
   const entranceMarkers = mapConfig?.zoneMarkers.filter((m) => m.type === 'entrance') || [];
   const entranceBottleneck = bottlenecks.find((b) => {
     if (b.maxQueueLength <= 10) return false;
@@ -110,7 +115,7 @@ export function generateActionableInsights(
       id: `insight-gate-lane-${entranceBottleneck.segmentId}`,
       category: 'Access Control',
       title: `Add a lane or a second gate at ${entranceBottleneck.segmentName}`,
-      description: `Queues at ${entranceBottleneck.segmentName} peaked at ${entranceBottleneck.maxQueueLength} vehicles. Adding an additional inbound lane or dual-channel entry will prevent spillback into perimeter streets.`,
+      description: `The line of cars at ${entranceBottleneck.segmentName} peaked at ${entranceBottleneck.maxQueueLength} cars. Adding an extra inbound lane or a second gate will stop cars spilling back onto nearby streets.`,
     });
   }
 
@@ -125,20 +130,21 @@ export function generateActionableInsights(
       id: 'insight-access-rules',
       category: 'Access Control',
       title: `Check one-way and sticker rules near ${gateName}`,
-      description: `Simulation detected ${blockedSpawns} blocked spawns and ${unroutableSpawns} unroutable vehicle trips. Check for conflicting one-way directions or restrictive sticker-only road classifications near ${gateName}.`,
+      description: `${blockedSpawns} cars were blocked from entering and ${unroutableSpawns} could not find a route. Check for conflicting one-way arrows or sticker-only roads near ${gateName}.`,
     });
   }
 
-  // Rule 5: Fallback if fewer than 2 apply -> report the top two bottlenecks with their max queue
+  // Rule 5: Fallback if fewer than 2 apply -> report the top two bottlenecks with their longest line of cars
   if (insights.length < 2) {
     if (bottlenecks.length > 0) {
       const b1 = bottlenecks[0];
       if (!insights.some((i) => i.description.includes(b1.segmentName))) {
+        const b1Status = getQueueStatus(b1.maxQueueLength).label.toLowerCase();
         insights.push({
           id: `insight-fallback-b1-${b1.segmentId}`,
           category: 'Bottleneck',
-          title: `Mitigate congestion at ${b1.segmentName}`,
-          description: `${b1.segmentName} recorded a peak queue of ${b1.maxQueueLength} vehicles (${b1.severity} severity). Consider widening road lanes or staggering departure schedules.`,
+          title: `Ease the backup at ${b1.segmentName}`,
+          description: `${b1.segmentName} had a longest line of ${b1.maxQueueLength} cars (${b1Status}). Widening the road or staggering arrivals would help.`,
         });
       }
     }
@@ -146,11 +152,12 @@ export function generateActionableInsights(
     if (bottlenecks.length > 1 && insights.length < 2) {
       const b2 = bottlenecks[1];
       if (!insights.some((i) => i.description.includes(b2.segmentName))) {
+        const b2Status = getQueueStatus(b2.maxQueueLength).label.toLowerCase();
         insights.push({
           id: `insight-fallback-b2-${b2.segmentId}`,
           category: 'Bottleneck',
-          title: `Improve clearance along ${b2.segmentName}`,
-          description: `${b2.segmentName} accumulated a peak queue of ${b2.maxQueueLength} vehicles. Adjust lane access or parking flow to improve corridor clearance.`,
+          title: `Keep traffic moving along ${b2.segmentName}`,
+          description: `${b2.segmentName} reached a longest line of ${b2.maxQueueLength} cars (${b2Status}). Adjusting lane access or direction could clear it faster.`,
         });
       }
     }
@@ -158,15 +165,15 @@ export function generateActionableInsights(
 
   // Final fallback if still fewer than 2 insights (e.g. empty map or completely clear run)
   if (insights.length < 2) {
-    const firstRoad = mapConfig?.roadSegments[0]?.name || 'the primary campus road';
-    const secondRoad = mapConfig?.roadSegments[1]?.name || 'the secondary campus corridor';
+    const firstRoad = mapConfig?.roadSegments[0]?.name || 'the main campus road';
+    const secondRoad = mapConfig?.roadSegments[1]?.name || 'the secondary campus road';
 
     if (insights.length === 0) {
       insights.push({
         id: 'insight-generic-1',
         category: 'Timing',
         title: `Stagger arrival times along ${firstRoad}`,
-        description: `Staggering vehicle arrivals by cohort prevents simultaneous peak loading along ${firstRoad}.`,
+        description: `Spreading out arrival times prevents too many cars hitting ${firstRoad} at once.`,
       });
     }
 
@@ -174,8 +181,8 @@ export function generateActionableInsights(
       insights.push({
         id: 'insight-generic-2',
         category: 'Circulation',
-        title: `Designate directional flow along ${secondRoad}`,
-        description: `Optimizing circulation along ${secondRoad} balances flow efficiency and maintains smooth campus transit.`,
+        title: `Balance traffic along ${secondRoad}`,
+        description: `Guiding some cars along ${secondRoad} evens out road capacity used and keeps trips smooth.`,
       });
     }
   }

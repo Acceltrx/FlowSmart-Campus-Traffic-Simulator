@@ -1,86 +1,176 @@
 /**
- * FlowSmart - Right Telemetry & Control Panel
- * Fixed 300px width.
- * Displays in order:
- * 1. Live metrics (refreshed every 500ms)
- * 2. Active alerts (gridlock, edge cases, wait/utilization alerts)
- * 3. Capacity utilization bars with Show Heatmap toggle synced to canvas
- * Controls pinned at the bottom (Stop, Pause/Resume, speed slider, reset all data, view results).
- * Meets all type scale (>= 12px) and spacing (16px padding, 20px sections, 12px rows, 36px buttons/inputs).
+ * FlowSmart - Floating Top-Right Telemetry Card
+ * 290px wide, scrolls if tall.
+ * Displays:
+ * 1. Status header (Ready / Running / Paused / Gridlocked / Finished), simulated clock, thin progress bar
+ * 2. Four live metrics in plain language ("--" before a run)
+ * 3. One alert at a time (gridlock first, then edge case, then newest alert)
+ * 4. Collapsible "Road usage" top-5 utilization bars
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  Square,
-  Play,
-  Pause,
   AlertTriangle,
+  ChevronDown,
   Info,
-  CheckCircle2,
-  BarChart3,
-  RotateCcw,
 } from 'lucide-react';
 import { useTrafficStore } from '../../context/TrafficStoreContext';
 import { useSimulation } from '../../context/SimulationContext';
+import {
+  getArrivalsPerHour,
+  getSegmentUsageStatus,
+  getThroughputStatus,
+  getTripTimeStatus,
+  getWaitStatus,
+} from '../../utils/status';
 
 interface RightPanelProps {
-  showHeatmap: boolean;
-  onToggleHeatmap: (show: boolean) => void;
+  showHeatmap?: boolean;
+  onToggleHeatmap?: (show: boolean) => void;
 }
 
-export const RightPanel: React.FC<RightPanelProps> = ({
-  showHeatmap,
-  onToggleHeatmap,
-}) => {
-  const { setActiveTab, resetAll, state: storeState } = useTrafficStore();
+function formatClockMMSS(seconds: number): string {
+  const totalSec = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+export const RightPanel: React.FC<RightPanelProps> = () => {
+  const { setActiveTab, state: storeState } = useTrafficStore();
   const {
     status,
+    simTimeSeconds,
     liveMetrics,
     segmentOccupancies,
     activeAlerts,
     isGridlocked,
     gridlockMessage,
     activeEdgeCase,
-    simSpeed,
-    setSimSpeed,
-    startSimulation,
-    startNewRun,
-    pauseSimulation,
-    resumeSimulation,
-    stopSimulation,
     lastResult,
-    routeValidation,
   } = useSimulation();
 
-  const [showResetModal, setShowResetModal] = useState<boolean>(false);
+  const [roadUsageOpen, setRoadUsageOpen] = useState<boolean>(true);
 
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
   const isComplete = status === 'completed';
   const isIdle = status === 'idle';
 
-  // Dismiss confirmation prompt on Escape
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowResetModal(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  const durationMin = storeState.settings.simDurationMin || 30;
+  const totalDurationSec = durationMin * 60;
+  const elapsedSec = isIdle
+    ? 0
+    : Math.min(totalDurationSec, Math.max(0, simTimeSeconds));
+  const progressPct =
+    totalDurationSec > 0
+      ? Math.min(100, Math.max(0, (elapsedSec / totalDurationSec) * 100))
+      : 0;
 
-  const handleTogglePlay = () => {
-    if (isRunning) {
-      pauseSimulation();
-    } else if (isPaused) {
-      resumeSimulation();
-    } else {
-      startNewRun();
+  const statusMeta = useMemo(() => {
+    if (isGridlocked && !isIdle) {
+      return {
+        label: 'Gridlocked',
+        pillClass: 'bg-[#EF4444]/10 text-[#EF4444]',
+        dotClass: 'bg-[#EF4444] animate-pulse',
+        barClass: 'bg-[#EF4444]',
+      };
     }
-  };
+    if (isRunning) {
+      return {
+        label: 'Running',
+        pillClass: 'bg-[#25A76B]/10 text-[#25A76B]',
+        dotClass: 'bg-[#25A76B] animate-pulse',
+        barClass: 'bg-[#25A76B]',
+      };
+    }
+    if (isPaused) {
+      return {
+        label: 'Paused',
+        pillClass: 'bg-[#F59E0B]/15 text-[#B45309]',
+        dotClass: 'bg-[#F59E0B]',
+        barClass: 'bg-[#F59E0B]',
+      };
+    }
+    if (isComplete) {
+      return {
+        label: 'Finished',
+        pillClass: 'bg-[#E7EEFF] text-[#254B98]',
+        dotClass: 'bg-[#254B98]',
+        barClass: 'bg-[#254B98]',
+      };
+    }
+    return {
+      label: 'Ready',
+      pillClass: 'bg-[#F5F6F8] text-[#6B7A99]',
+      dotClass: 'bg-[#6B7A99]',
+      barClass: 'bg-[#254B98]',
+    };
+  }, [isGridlocked, isIdle, isRunning, isPaused, isComplete]);
 
-  // Determine top segments for capacity bars dynamically from drawn road segments
+  // Single alert at a time: gridlock first, then edge case, then newest alert
+  const singleAlert = useMemo(() => {
+    if (isGridlocked && !isIdle) {
+      return {
+        tone: 'critical' as const,
+        title: 'Traffic is gridlocked',
+        message:
+          gridlockMessage || 'Zero vehicle movement for over 120 simulated seconds.',
+        showEditMap: false,
+      };
+    }
+
+    if (activeEdgeCase && !isIdle) {
+      const isAmber =
+        activeEdgeCase.type === 'zero-spawn-rate' ||
+        activeEdgeCase.type === 'all-sticker-only' ||
+        activeEdgeCase.type === 'all-non-sticker-only';
+      const needsMapFix =
+        activeEdgeCase.type === 'zero-roads' ||
+        activeEdgeCase.type === 'no-entrance' ||
+        activeEdgeCase.type === 'no-exit' ||
+        activeEdgeCase.type === 'no-drop-off' ||
+        activeEdgeCase.type === 'no-valid-path' ||
+        activeEdgeCase.type === 'all-exits-blocked';
+
+      const titles: Record<string, string> = {
+        'zero-roads': 'No roads drawn',
+        'no-entrance': 'No entrance gate',
+        'no-exit': 'No exit gate',
+        'no-drop-off': 'No drop-off zone',
+        'no-valid-path': 'No connected route',
+        'all-exits-blocked': 'All exits blocked',
+        'zero-spawn-rate': 'No arriving cars',
+        'all-sticker-only': 'Sticker holders only',
+        'all-non-sticker-only': 'Visitors only',
+      };
+
+      return {
+        tone: isAmber ? ('warn' as const) : ('critical' as const),
+        title: titles[activeEdgeCase.type] || 'Notice',
+        message: activeEdgeCase.message,
+        showEditMap: needsMapFix,
+      };
+    }
+
+    if (activeAlerts.length > 0 && !isIdle) {
+      const criticalAlerts = activeAlerts.filter((a) => a.type === 'critical');
+      const picked =
+        criticalAlerts.length > 0
+          ? criticalAlerts[criticalAlerts.length - 1]
+          : activeAlerts[activeAlerts.length - 1];
+      return {
+        tone: picked.type === 'critical' ? ('critical' as const) : ('info' as const),
+        title: picked.title,
+        message: picked.message,
+        showEditMap: false,
+      };
+    }
+
+    return null;
+  }, [isGridlocked, isIdle, gridlockMessage, activeEdgeCase, activeAlerts]);
+
+  // Top 5 segments sorted by current utilization
   const displaySegments = useMemo(() => {
     const segments = storeState.map.roadSegments;
     if (segments.length === 0) return [];
@@ -93,264 +183,245 @@ export const RightPanel: React.FC<RightPanelProps> = ({
       .slice(0, 5);
   }, [storeState.map.roadSegments, segmentOccupancies]);
 
-  const getBarColor = (pct: number) => {
-    if (pct >= 80) return 'bg-[#EF4444]'; // Red > 80%
-    if (pct >= 60) return 'bg-[#F59E0B]'; // Amber 60-80%
-    return 'bg-[#25A76B]'; // Green < 60%
-  };
+  const throughputVal =
+    isComplete && lastResult ? lastResult.totalThroughputVehHr : liveMetrics.throughputVehHr;
+  const waitVal = isComplete && lastResult ? lastResult.avgWaitTimeSec : liveMetrics.avgWaitTimeSec;
+  const tripVal =
+    isComplete && lastResult ? lastResult.avgTransitTimeSec : liveMetrics.avgTransitTimeSec;
 
-  const getTextColor = (pct: number) => {
-    if (pct >= 80) return 'text-[#EF4444]';
-    if (pct >= 60) return 'text-[#F59E0B]';
-    return 'text-[#25A76B]';
-  };
+  const arrivalsPerHr = getArrivalsPerHour(
+    storeState.settings.spawnRates,
+    isComplete && lastResult
+      ? (lastResult.spawnedSticker ?? 0) + (lastResult.spawnedNonSticker ?? 0)
+      : undefined,
+    durationMin
+  );
+
+  const throughputStatus = isIdle ? null : getThroughputStatus(throughputVal, arrivalsPerHr);
+  const waitStatus = isIdle ? null : getWaitStatus(waitVal);
+  const tripStatus = isIdle ? null : getTripTimeStatus(tripVal);
+
+  const carsOnCampus = isIdle ? '--' : liveMetrics.activeVehicles.toLocaleString();
+  const carsExitingPerHr = isIdle ? '--' : `${throughputVal.toLocaleString()} /hr`;
+  const avgWaitSec = isIdle ? '--' : `${waitVal} s`;
+  const avgTripSec = isIdle ? '--' : `${tripVal} s`;
 
   return (
-    <aside className="w-[300px] shrink-0 bg-white border-l border-[#E2E6EF] flex flex-col justify-between h-full z-20 select-none">
-      {/* Scrollable upper sections: Live metrics, Active alerts, Capacity utilization */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* Section 1: Live metrics / Final metrics */}
-        <div className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between pb-2 border-b border-[#E2E6EF]">
-            <h2 className="text-[16px] font-medium text-[#111C2D]">
-              {isComplete ? 'Final metrics' : 'Live metrics'}
-            </h2>
-            {isComplete ? (
-              <span className="text-[12px] font-medium text-[#254B98]">Finished</span>
-            ) : isGridlocked ? (
-              <span className="text-[12px] font-semibold text-[#EF4444] animate-pulse">Gridlocked</span>
-            ) : isRunning ? (
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-[#25A76B] animate-pulse" />
-                <span className="text-[12px] font-medium text-[#25A76B]">Active</span>
-              </div>
-            ) : (
-              <span className="text-[12px] text-[#6B7A99]">Inactive</span>
-            )}
-          </div>
+    <aside
+      aria-label="Live simulation summary"
+      className="absolute top-3 right-3 z-30 w-[290px] max-h-[calc(100%-76px)] overflow-y-auto bg-white/95 backdrop-blur border border-[#E2E6EF] rounded-[12px] shadow-md p-4 flex flex-col gap-3.5 select-none"
+    >
+      {/* Header: Status + Simulated clock + Thin progress bar */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <span
+            id="statusBadge"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-semibold ${statusMeta.pillClass}`}
+          >
+            <span className={`w-2 h-2 rounded-full ${statusMeta.dotClass}`} />
+            <span>{statusMeta.label}</span>
+          </span>
 
-          <div className="p-3 rounded-lg bg-[#F5F6F8] border border-[#E2E6EF] flex flex-col space-y-2.5">
-            {isComplete ? (
-              <>
-                <div className="flex justify-between items-center text-[13px]">
-                  <span className="text-[12px] text-[#6B7A99]">Total completed</span>
-                  <span className="text-[14px] font-medium text-[#254B98] tabular-nums">
-                    {liveMetrics.totalCompletedVehicles || lastResult?.totalProcessedVehicles || 0} veh
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[13px] pt-1.5 border-t border-[#E2E6EF]/70">
-                  <span className="text-[12px] text-[#6B7A99]">Avg throughput</span>
-                  <span className="text-[14px] font-medium text-[#111C2D] tabular-nums">
-                    {(liveMetrics.throughputVehHr || lastResult?.totalThroughputVehHr || 0).toLocaleString()} veh/hr
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[13px] pt-1.5 border-t border-[#E2E6EF]/70">
-                  <span className="text-[12px] text-[#6B7A99]">Avg wait time</span>
-                  <span className="text-[14px] font-medium text-[#111C2D] tabular-nums">
-                    {lastResult ? `${lastResult.avgWaitTimeSec} s` : (liveMetrics.avgWaitTimeSec ? `${liveMetrics.avgWaitTimeSec} s` : '0 s')}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[13px] pt-1.5 border-t border-[#E2E6EF]/70">
-                  <span className="text-[12px] text-[#6B7A99]">Max queue length</span>
-                  <span className="text-[14px] font-medium text-[#EF4444] tabular-nums">
-                    {lastResult ? `${lastResult.maxQueueLengthVeh} veh` : (liveMetrics.maxQueueLengthVeh ? `${liveMetrics.maxQueueLengthVeh} veh` : '0 veh')}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[13px] pt-1.5 border-t border-[#E2E6EF]/70">
-                  <span className="text-[12px] text-[#6B7A99]">Avg transit time</span>
-                  <span className="text-[14px] font-medium text-[#111C2D] tabular-nums">
-                    {liveMetrics.avgTransitTimeSec || lastResult?.avgTransitTimeSec || 0} s
-                  </span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="flex justify-between items-center text-[13px]">
-                  <span className="text-[12px] text-[#6B7A99]">Active vehicles</span>
-                  <span
-                    className={`text-[14px] font-medium tabular-nums ${
-                      isRunning || isPaused ? 'text-[#254B98]' : 'text-[#6B7A99]'
-                    }`}
-                  >
-                    {isRunning || isPaused ? liveMetrics.activeVehicles : '--'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[13px] pt-1.5 border-t border-[#E2E6EF]/70">
-                  <span className="text-[12px] text-[#6B7A99]">Throughput</span>
-                  <span
-                    className={`text-[14px] font-medium tabular-nums ${
-                      isRunning || isPaused ? 'text-[#111C2D]' : 'text-[#6B7A99]'
-                    }`}
-                  >
-                    {isRunning || isPaused
-                      ? `${liveMetrics.throughputVehHr.toLocaleString()} v/h`
-                      : '--'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[13px] pt-1.5 border-t border-[#E2E6EF]/70">
-                  <span className="text-[12px] text-[#6B7A99]">Avg wait</span>
-                  <span
-                    className={`text-[14px] font-medium tabular-nums ${
-                      isRunning || isPaused ? 'text-[#111C2D]' : 'text-[#6B7A99]'
-                    }`}
-                  >
-                    {isRunning || isPaused ? `${liveMetrics.avgWaitTimeSec}s` : '--'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[13px] pt-1.5 border-t border-[#E2E6EF]/70">
-                  <span className="text-[12px] text-[#6B7A99]">Avg transit</span>
-                  <span
-                    className={`text-[14px] font-medium tabular-nums ${
-                      isRunning || isPaused ? 'text-[#111C2D]' : 'text-[#6B7A99]'
-                    }`}
-                  >
-                    {isRunning || isPaused ? `${liveMetrics.avgTransitTimeSec}s` : '--'}
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
+          <span
+            id="clockDisplay"
+            className="text-[13px] font-semibold text-[#111C2D] tabular-nums"
+          >
+            {formatClockMMSS(elapsedSec)} / {String(durationMin).padStart(2, '0')}:00
+          </span>
         </div>
 
-        {/* Section 2: Active alerts */}
-        <div className="flex flex-col space-y-3 pt-2 border-t border-[#E2E6EF]">
-          <div className="flex items-center justify-between pb-1">
-            <h2 className="text-[16px] font-medium text-[#111C2D]">Active alerts</h2>
-            {isGridlocked ? (
-              <span className="text-[12px] bg-red-100 text-[#EF4444] px-2 py-0.5 rounded-lg font-bold">
-                Gridlock
-              </span>
-            ) : activeAlerts.filter((a) => a.type === 'critical').length > 0 ? (
-              <span className="text-[12px] bg-red-100 text-[#EF4444] px-2 py-0.5 rounded-lg font-semibold">
-                {activeAlerts.filter((a) => a.type === 'critical').length} Critical
-              </span>
-            ) : null}
-          </div>
+        <div
+          className="w-full h-1.5 bg-[#E2E6EF] rounded-full overflow-hidden"
+          role="progressbar"
+          aria-valuenow={Math.round(progressPct)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Simulation progress"
+        >
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${statusMeta.barClass}`}
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+      </div>
 
-          {/* Gridlock condition callout */}
-          {isGridlocked && (
-            <div className="bg-red-50 border border-[#EF4444] p-3 rounded-lg flex flex-col space-y-1 text-red-900">
-              <div className="flex items-center gap-2 text-[#EF4444]">
-                <AlertTriangle size={16} className="shrink-0" />
-                <span className="text-[13px] font-semibold">Gridlock condition</span>
-              </div>
-              <p className="text-[12px] text-[#EF4444] leading-relaxed">
-                {gridlockMessage || 'Zero vehicle movement for over 120 simulated seconds.'}
-              </p>
-            </div>
-          )}
+      {/* Four live metrics */}
+      <div className="p-3 rounded-[12px] bg-[#F5F6F8] border border-[#E2E6EF] flex flex-col gap-2">
+        <div className="flex justify-between items-center gap-2">
+          <span className="text-[12px] text-[#6B7A99]">Cars on campus now</span>
+          <span
+            className={`text-[14px] font-semibold tabular-nums ${
+              isIdle ? 'text-[#6B7A99]' : 'text-[#254B98]'
+            }`}
+          >
+            {carsOnCampus}
+          </span>
+        </div>
 
-          {/* Edge case callout */}
-          {!isGridlocked && activeEdgeCase && (
-            <div
-              className={`p-3 rounded-lg flex flex-col space-y-1 border ${
-                activeEdgeCase.type === 'zero-spawn-rate'
-                  ? 'bg-amber-50 border-[#F59E0B] text-amber-900'
-                  : 'bg-red-50 border-[#EF4444] text-red-900'
+        <div className="flex flex-wrap justify-between items-center gap-x-2 gap-y-1 pt-2 border-t border-[#E2E6EF]/80">
+          <span className="text-[12px] text-[#6B7A99]">Cars exiting per hour</span>
+          <div className="flex items-center gap-1.5 ml-auto">
+            {throughputStatus && (
+              <span
+                className={`text-[12px] px-2 py-0.5 rounded-full font-semibold ${throughputStatus.badgeClass}`}
+              >
+                {throughputStatus.label}
+              </span>
+            )}
+            <span
+              className={`text-[14px] font-semibold tabular-nums ${
+                isIdle ? 'text-[#6B7A99]' : 'text-[#111C2D]'
               }`}
             >
-              <div
-                className={`flex items-center gap-2 ${
-                  activeEdgeCase.type === 'zero-spawn-rate' ? 'text-[#F59E0B]' : 'text-[#EF4444]'
-                }`}
-              >
-                <AlertTriangle size={15} className="shrink-0" />
-                <span className="text-[13px] font-semibold capitalize">
-                  {activeEdgeCase.type.replace(/-/g, ' ')}
-                </span>
-              </div>
-              <p className="text-[12px] leading-relaxed">{activeEdgeCase.message}</p>
-            </div>
-          )}
-
-          {/* Active alert cards list */}
-          <div className="flex flex-col space-y-3">
-            {activeAlerts.map((alert) => (
-              <div
-                key={alert.id}
-                className={`p-3 rounded-lg border flex flex-col space-y-1 ${
-                  alert.type === 'critical'
-                    ? 'bg-red-50/70 border-[#EF4444]/30 text-red-900'
-                    : 'bg-[#F5F6F8] border-[#E2E6EF] text-[#434651]'
-                }`}
-              >
-                <div
-                  className={`flex items-center gap-1.5 ${
-                    alert.type === 'critical' ? 'text-[#EF4444]' : 'text-[#254B98]'
-                  }`}
-                >
-                  {alert.type === 'critical' ? (
-                    <AlertTriangle size={15} className="shrink-0" />
-                  ) : (
-                    <Info size={15} className="shrink-0" />
-                  )}
-                  <span className="text-[13px] font-medium truncate">{alert.title}</span>
-                </div>
-                <p className="text-[12px] text-[#434651] leading-relaxed">{alert.message}</p>
-              </div>
-            ))}
-
-            {activeAlerts.length === 0 && !isGridlocked && !activeEdgeCase && (
-              <div className="bg-[#F5F6F8] border border-[#E2E6EF] p-3 rounded-lg text-center text-[#6B7A99] text-[12px]">
-                {isRunning
-                  ? 'Normal flow across all corridors'
-                  : isComplete
-                  ? 'Evaluation session finalized'
-                  : 'No active alerts'}
-              </div>
-            )}
+              {carsExitingPerHr}
+            </span>
           </div>
         </div>
 
-        {/* Section 3: Capacity utilization */}
-        <div className="flex flex-col space-y-3 pt-2 border-t border-[#E2E6EF]">
-          <div className="flex items-center justify-between pb-1">
-            <h2 className="text-[16px] font-medium text-[#111C2D]">
-              {isComplete ? 'Peak utilization' : 'Capacity utilization'}
-            </h2>
-            {/* Show Heatmap Toggle */}
-            <label className="flex items-center gap-2 cursor-pointer h-9 px-2 rounded-lg hover:bg-gray-50 transition-colors">
-              <span className="text-[12px] text-[#6B7A99]">Heatmap</span>
+        <div className="flex flex-wrap justify-between items-center gap-x-2 gap-y-1 pt-2 border-t border-[#E2E6EF]/80">
+          <span className="text-[12px] text-[#6B7A99]">Average wait in line</span>
+          <div className="flex items-center gap-1.5 ml-auto">
+            {waitStatus && (
+              <span
+                className={`text-[12px] px-2 py-0.5 rounded-full font-semibold ${waitStatus.badgeClass}`}
+              >
+                {waitStatus.label}
+              </span>
+            )}
+            <span
+              className={`text-[14px] font-semibold tabular-nums ${
+                isIdle ? 'text-[#6B7A99]' : 'text-[#111C2D]'
+              }`}
+            >
+              {avgWaitSec}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap justify-between items-center gap-x-2 gap-y-1 pt-2 border-t border-[#E2E6EF]/80">
+          <span className="text-[12px] text-[#6B7A99]">Average trip time</span>
+          <div className="flex items-center gap-1.5 ml-auto">
+            {tripStatus && (
+              <span
+                className={`text-[12px] px-2 py-0.5 rounded-full font-semibold ${tripStatus.badgeClass}`}
+              >
+                {tripStatus.label}
+              </span>
+            )}
+            <span
+              className={`text-[14px] font-semibold tabular-nums ${
+                isIdle ? 'text-[#6B7A99]' : 'text-[#111C2D]'
+              }`}
+            >
+              {avgTripSec}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Single alert line at a time */}
+      <div>
+        {singleAlert ? (
+          <div
+            className={`p-3 rounded-[12px] border flex flex-col gap-1.5 ${
+              singleAlert.tone === 'critical'
+                ? 'bg-[#EF4444]/10 border-[#EF4444]/40 text-[#111C2D]'
+                : singleAlert.tone === 'warn'
+                ? 'bg-[#F59E0B]/10 border-[#F59E0B]/40 text-[#111C2D]'
+                : 'bg-[#E7EEFF]/70 border-[#254B98]/25 text-[#111C2D]'
+            }`}
+          >
+            <div className="flex items-center gap-1.5">
+              {singleAlert.tone === 'info' ? (
+                <Info size={14} className="text-[#254B98] shrink-0" />
+              ) : (
+                <AlertTriangle
+                  size={14}
+                  className={
+                    singleAlert.tone === 'critical'
+                      ? 'text-[#EF4444] shrink-0'
+                      : 'text-[#F59E0B] shrink-0'
+                  }
+                />
+              )}
+              <span className="text-[12px] font-semibold text-[#111C2D] truncate">
+                {singleAlert.title}
+              </span>
+            </div>
+            <p className="text-[12px] text-[#6B7A99] leading-snug">
+              {singleAlert.message}
+            </p>
+            {singleAlert.showEditMap && (
               <button
                 type="button"
-                onClick={() => onToggleHeatmap(!showHeatmap)}
-                className={`w-7 h-4 rounded-full relative p-0.5 transition-colors flex items-center cursor-pointer active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1 ${
-                  showHeatmap ? 'bg-[#254B98] justify-end' : 'bg-[#CBD5E1] justify-start'
-                }`}
-                aria-label="Toggle heatmap overlay"
+                onClick={() => setActiveTab('map-setup')}
+                className="self-start h-9 px-3 mt-0.5 rounded-lg bg-[#254B98] hover:bg-[#1c3b78] text-white text-[12px] font-medium cursor-pointer transition-colors"
               >
-                <span className="w-3 h-3 bg-white rounded-full block" />
+                Edit map
               </button>
-            </label>
+            )}
           </div>
+        ) : (
+          <div className="px-3 py-2.5 rounded-[12px] bg-[#F5F6F8] border border-[#E2E6EF] text-[12px] text-[#6B7A99]">
+            {isRunning || isPaused
+              ? 'No alerts. Traffic is moving.'
+              : isComplete
+              ? 'Run finished.'
+              : 'No active alerts.'}
+          </div>
+        )}
+      </div>
 
-          <div className="flex flex-col space-y-3">
+      {/* Collapsible Road usage (top 5 segments) */}
+      <div className="pt-1 border-t border-[#E2E6EF]">
+        <button
+          type="button"
+          onClick={() => setRoadUsageOpen((prev) => !prev)}
+          aria-expanded={roadUsageOpen}
+          className="w-full h-9 px-1 flex items-center justify-between text-[13px] font-semibold text-[#111C2D] hover:text-[#254B98] rounded-lg cursor-pointer transition-colors"
+        >
+          <span>Road usage</span>
+          <ChevronDown
+            size={16}
+            className={`text-[#6B7A99] transition-transform duration-150 ${
+              roadUsageOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+
+        {roadUsageOpen && (
+          <div className="pt-2 flex flex-col gap-2.5">
             {displaySegments.length === 0 ? (
-              <div className="text-center text-[#6B7A99] py-2 text-[12px]">No roads drawn yet</div>
+              <div className="text-center text-[#6B7A99] py-2 text-[12px]">
+                No roads drawn yet
+              </div>
             ) : (
               displaySegments.map((seg) => {
                 const segOcc = segmentOccupancies[seg.id];
                 const pct = isIdle ? 0 : segOcc ? segOcc.utilizationPct : 0;
-                const name = seg.name;
+                const usageStatus = getSegmentUsageStatus(pct);
 
                 return (
-                  <div key={seg.id} className="flex flex-col space-y-1">
-                    <div className="flex justify-between items-center text-[13px]">
-                      <span className="text-[#111C2D] font-medium truncate max-w-[190px]" title={name}>
-                        {name}
+                  <div key={seg.id} className="flex flex-col gap-1">
+                    <div className="flex justify-between items-center gap-2 text-[12px]">
+                      <span
+                        className="text-[#111C2D] font-medium truncate"
+                        title={seg.name}
+                      >
+                        {seg.name}
                       </span>
                       <span
-                        className={`font-semibold text-[12px] tabular-nums ${
-                          isIdle ? 'text-[#6B7A99]' : getTextColor(pct)
+                        className={`font-semibold tabular-nums shrink-0 ${
+                          isIdle ? 'text-[#6B7A99]' : usageStatus.textClass
                         }`}
                       >
                         {isIdle ? '0%' : `${pct}%`}
                       </span>
                     </div>
-                    <div className="w-full h-2 bg-[#E2E6EF] rounded-lg overflow-hidden">
+                    <div className="w-full h-2 bg-[#E2E6EF] rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-lg transition-all duration-300 ${
-                          isIdle ? 'bg-[#CBD5E1]' : getBarColor(pct)
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          isIdle ? 'bg-[#E2E6EF]' : usageStatus.barClass
                         }`}
                         style={{ width: `${pct}%` }}
                       />
@@ -360,161 +431,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               })
             )}
           </div>
-        </div>
-      </div>
-
-      {/* Pinned bottom controls container */}
-      <div className="p-4 pt-3 border-t border-[#E2E6EF] shrink-0 bg-white space-y-3">
-        {isComplete ? (
-          /* Three things in order: Run again (green), View results (outline), Edit layout (text link) */
-          <div className="flex flex-col space-y-2">
-            {/* 1. Green primary button "Run again" (Play icon, calls startNewRun) */}
-            <button
-              type="button"
-              onClick={startNewRun}
-              disabled={!routeValidation.isValid}
-              className={`w-full h-9 px-4 rounded-lg text-[13px] font-medium flex items-center justify-center gap-2 transition-all ${
-                routeValidation.isValid
-                  ? 'bg-[#25A76B] hover:bg-[#1f8c59] active:scale-98 text-white cursor-pointer'
-                  : 'bg-gray-200 text-[#6B7A99] cursor-not-allowed shadow-none'
-              } focus:outline-none focus-visible:ring-2 focus-visible:ring-[#25A76B] focus-visible:ring-offset-1`}
-              title={routeValidation.isValid ? 'Run simulation again' : (routeValidation.errorMessage || 'Cannot run: invalid routes')}
-            >
-              <Play size={15} className={routeValidation.isValid ? 'fill-current' : 'fill-gray-400 stroke-none'} />
-              <span>Run again</span>
-            </button>
-
-            {/* 2. Secondary outline button "View results" */}
-            <button
-              type="button"
-              onClick={() => setActiveTab('results')}
-              className="w-full h-9 px-4 bg-white hover:bg-[#F5F6F8] active:scale-98 text-[#1E293B] border border-[#E2E6EF] rounded-lg text-[13px] font-medium flex items-center justify-center gap-2 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1"
-            >
-              <BarChart3 size={15} />
-              <span>View results</span>
-            </button>
-
-            {/* 3. Small text link "Edit layout" (goes to Map setup tab) */}
-            <div className="text-center pt-0.5">
-              <button
-                type="button"
-                onClick={() => setActiveTab('map-setup')}
-                className="text-[12px] text-[#254B98] hover:text-[#1b366e] hover:underline cursor-pointer"
-              >
-                Edit layout
-              </button>
-            </div>
-          </div>
-        ) : (
-          /* Playback controls (Stop, Pause/Resume) when running, paused, or idle */
-          <div className="flex items-center gap-2">
-            {/* Stop button (36px tall) */}
-            <button
-              type="button"
-              onClick={stopSimulation}
-              className="w-9 h-9 shrink-0 flex items-center justify-center rounded-lg text-[#6B7A99] hover:text-[#111C2D] bg-[#F5F6F8] hover:bg-gray-200 border border-[#E2E6EF] active:scale-90 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1"
-              title="Stop simulation"
-              aria-label="Stop simulation"
-            >
-              <Square size={14} className="fill-current" />
-            </button>
-
-            {/* Pause / Resume / Start toggle button (36px tall) */}
-            <button
-              type="button"
-              onClick={handleTogglePlay}
-              className="flex-1 h-9 px-3 flex items-center justify-center rounded-lg bg-[#F5F6F8] hover:bg-gray-200 border border-[#E2E6EF] text-[#25A76B] active:scale-95 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1 font-medium gap-2 text-[13px]"
-              title={isRunning ? 'Pause [Space]' : isPaused ? 'Resume [Space]' : 'Start [Space]'}
-              aria-label={isRunning ? 'Pause' : isPaused ? 'Resume' : 'Start'}
-            >
-              {isRunning ? (
-                <>
-                  <Pause size={15} className="fill-current text-[#254B98]" />
-                  <span className="text-[#254B98]">Pause</span>
-                </>
-              ) : (
-                <>
-                  <Play size={15} className="fill-current text-[#25A76B]" />
-                  <span>{isPaused ? 'Resume' : 'Start'}</span>
-                </>
-              )}
-            </button>
-          </div>
         )}
-
-        {/* Speed slider 0.5x to 5x (visible in all states including completed) */}
-        <div className="flex flex-col space-y-1.5 pt-1">
-          <div className="flex justify-between items-center text-[12px]">
-            <span className="text-[#6B7A99]">Simulation speed</span>
-            <span className="text-[#254B98] font-medium tabular-nums" id="speedLabel">
-              {simSpeed}x
-            </span>
-          </div>
-          <input
-            id="speedSlider"
-            type="range"
-            min="0.5"
-            max="5"
-            step="0.5"
-            value={simSpeed}
-            onChange={(e) => setSimSpeed(parseFloat(e.target.value))}
-            className="w-full h-2 bg-[#E2E6EF] rounded-lg appearance-none cursor-pointer accent-[#254B98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1"
-            aria-label="Simulation speed slider"
-          />
-          <div className="flex justify-between text-[12px] text-[#6B7A99] px-0.5">
-            <span>0.5x</span>
-            <span>1x</span>
-            <span>2x</span>
-            <span>5x</span>
-          </div>
-        </div>
-
-        {/* Reset all data button (at least 36px tall) */}
-        <button
-          type="button"
-          onClick={() => setShowResetModal(true)}
-          className="w-full h-9 px-3 rounded-lg text-[12px] font-medium transition-all border border-[#E2E6EF] text-[#6B7A99] hover:text-red-600 hover:border-red-200 flex items-center justify-center gap-2 cursor-pointer active:scale-98 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-1"
-          title="Clears all map, settings, and run logs from LocalStorage"
-        >
-          <RotateCcw size={14} />
-          <span>Reset all data</span>
-        </button>
       </div>
-
-      {/* Reset all data Confirmation Modal */}
-      {showResetModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg max-w-sm w-full p-5 shadow-xl border border-[#E2E6EF] flex flex-col gap-3">
-            <div className="flex items-center gap-2 text-red-600 font-medium text-[15px]">
-              <AlertTriangle size={18} />
-              <span>Confirm data reset</span>
-            </div>
-            <p className="text-[12px] text-[#6B7A99] leading-relaxed">
-              This erases the map, all settings and the whole run history. Use New layout if you only want a fresh map.
-            </p>
-            <div className="flex items-center justify-end gap-2 mt-2">
-              <button
-                type="button"
-                onClick={() => setShowResetModal(false)}
-                className="h-9 px-4 rounded-lg border border-[#E2E6EF] text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  stopSimulation();
-                  resetAll();
-                  setShowResetModal(false);
-                }}
-                className="h-9 px-4 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[13px] font-medium cursor-pointer"
-              >
-                Reset all
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   );
 };

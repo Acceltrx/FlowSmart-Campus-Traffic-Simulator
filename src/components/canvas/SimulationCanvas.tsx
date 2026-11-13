@@ -20,15 +20,18 @@
  * - Updated legend showing both vehicle types and road access types.
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
-  Timer,
   Plus,
   Minus,
   Maximize2,
   Play,
-  CheckCircle2,
+  Pause,
+  Square,
+  Lock,
   AlertTriangle,
+  BarChart3,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useTrafficStore } from '../../context/TrafficStoreContext';
 import { useSimulation } from '../../context/SimulationContext';
@@ -43,17 +46,18 @@ import {
   VEHICLE_WIDTH_M,
 } from '../../utils/scale';
 import { ScaleBar } from '../common/ScaleBar';
+import { SCENARIOS, detectScenario } from '../../utils/scenarios';
+import { DIRECT_KEY, getEntranceSplit } from '../../utils/destinationSplit';
 
 interface SimulationCanvasProps {
   showHeatmap: boolean;
   onToggleHeatmap: (show: boolean) => void;
 }
 
-function formatTimer(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+const SPEED_OPTIONS = [0.5, 1, 2, 5] as const;
+
+function cleanName(name: string): string {
+  return name.replace(/\s*\(.*\)/, '').trim();
 }
 
 // Shortest-angle interpolation between two headings in radians
@@ -85,18 +89,14 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   const { state: storeState, setActiveTab } = useTrafficStore();
   const {
     status,
-    simTimeSeconds,
-    isGridlocked,
-    gridlockMessage,
-    activeEdgeCase,
-    startSimulation,
+    simSpeed,
+    setSimSpeed,
+    startNewRun,
     pauseSimulation,
     resumeSimulation,
     stopSimulation,
     getSnapshot,
     getInterpolationAlpha,
-    liveMetrics,
-    segmentOccupancies,
     routeValidation,
     isMapEditedWhileRunning,
   } = useSimulation();
@@ -104,6 +104,8 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   const [zoom, setZoom] = useState<number>(100);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
+  const [showLegend, setShowLegend] = useState<boolean>(true);
+
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ pointerX: number; pointerY: number; panX: number; panY: number }>({
     pointerX: 0,
@@ -163,27 +165,85 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   const isComplete = status === 'completed';
   const isIdle = status === 'idle';
 
-  // Action: Fit resets zoom to 100 and pan to (0, 0)
+  // Fit the map cleanly inside the area between the floating panels
   const handleFit = useCallback(() => {
-    zoomRef.current = 100;
-    panRef.current = { x: 0, y: 0 };
+    const cssWidth = sizeRef.current.width;
+    const cssHeight = sizeRef.current.height;
+    const bounds = mapRef.current.bounds || { width: 1000, height: 600 };
+    const mapWidth = bounds.width;
+    const mapHeight = bounds.height;
+
+    if (cssWidth <= 0 || cssHeight <= 0 || mapWidth <= 0 || mapHeight <= 0) {
+      zoomRef.current = 100;
+      panRef.current = { x: 0, y: 0 };
+      offscreenDirtyRef.current = true;
+      setZoom(100);
+      setPan({ x: 0, y: 0 });
+      return;
+    }
+
+    const baseScale = Math.min(cssWidth / mapWidth, cssHeight / mapHeight);
+    if (baseScale <= 0) return;
+
+    // Safe inner viewport between top-left card, top-right card (290px), bottom-left legend, and bottom controls
+    const leftPad = cssWidth >= 1040 ? 290 : cssWidth >= 780 ? 220 : 16;
+    const rightPad = cssWidth >= 1040 ? 316 : cssWidth >= 780 ? 304 : 16;
+    const topPad = cssWidth >= 780 ? 24 : 190;
+    const bottomPad = 84;
+
+    const availW = Math.max(120, cssWidth - leftPad - rightPad);
+    const availH = Math.max(120, cssHeight - topPad - bottomPad);
+
+    const markers = mapRef.current.zoneMarkers || [];
+    let minX = 0;
+    let minY = 0;
+    let maxX = mapWidth;
+    let maxY = mapHeight;
+    for (const m of markers) {
+      minX = Math.min(minX, m.position.x - 40);
+      minY = Math.min(minY, m.position.y - 24);
+      maxX = Math.max(maxX, m.position.x + 40);
+      maxY = Math.max(maxY, m.position.y + 24);
+    }
+
+    const contentW = Math.max(1, maxX - minX);
+    const contentH = Math.max(1, maxY - minY);
+    const targetScale = Math.min(availW / contentW, availH / contentH);
+    const targetZoom = Math.max(25, Math.min(400, (targetScale / baseScale) * 100));
+    const actualScale = baseScale * (targetZoom / 100);
+
+    const contentCenterX = (minX + maxX) / 2;
+    const contentCenterY = (minY + maxY) / 2;
+    const safeCenterX = leftPad + availW / 2;
+    const safeCenterY = topPad + availH / 2;
+
+    const nextPan = {
+      x: safeCenterX - (cssWidth - mapWidth * actualScale) / 2 - contentCenterX * actualScale,
+      y: safeCenterY - (cssHeight - mapHeight * actualScale) / 2 - contentCenterY * actualScale,
+    };
+
+    zoomRef.current = targetZoom;
+    panRef.current = nextPan;
     offscreenDirtyRef.current = true;
-    setZoom(100);
-    setPan({ x: 0, y: 0 });
+    setZoom(targetZoom);
+    setPan(nextPan);
   }, []);
 
-  // Zoom and pan reset to Fit ONLY when map bounds change or user presses Fit
+  // Re-fit when map bounds change
   const prevBoundsRef = useRef<{ width: number; height: number } | null>(null);
+  const hasInitialFittedRef = useRef<boolean>(false);
   useEffect(() => {
     const currentBounds = storeState.map.bounds;
     if (!currentBounds) return;
     if (
-      !prevBoundsRef.current ||
-      prevBoundsRef.current.width !== currentBounds.width ||
-      prevBoundsRef.current.height !== currentBounds.height
+      prevBoundsRef.current &&
+      (prevBoundsRef.current.width !== currentBounds.width ||
+        prevBoundsRef.current.height !== currentBounds.height)
     ) {
       prevBoundsRef.current = { width: currentBounds.width, height: currentBounds.height };
       handleFit();
+    } else if (!prevBoundsRef.current) {
+      prevBoundsRef.current = { width: currentBounds.width, height: currentBounds.height };
     }
   }, [storeState.map.bounds, handleFit]);
 
@@ -406,11 +466,56 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   const GRID_CELL_PX = 20;
   const currentCellMeters = Math.round(metersPerUnit * GRID_CELL_PX * 10) / 10;
 
-  // Measure peak queue for floating tailback badge
-  const peakQueueSeg = Object.values(segmentOccupancies).reduce(
-    (max, seg) => (seg.queueCount > (max?.queueCount || 0) ? seg : max),
-    null as (typeof segmentOccupancies)[string] | null
+  // Scenario summary & pre-run checks (matching SettingsView)
+  const entrances = useMemo(
+    () => (storeState.map.zoneMarkers || []).filter((m) => m.type === 'entrance'),
+    [storeState.map.zoneMarkers]
   );
+  const dropoffs = useMemo(
+    () => (storeState.map.zoneMarkers || []).filter((m) => m.type === 'dropoff'),
+    [storeState.map.zoneMarkers]
+  );
+  const activeScenarioId =
+    storeState.settings.scenarioId ?? detectScenario(storeState.settings, entrances);
+  const activeScenarioName = useMemo(() => {
+    if (activeScenarioId === 'custom') return 'Custom';
+    return SCENARIOS.find((s) => s.id === activeScenarioId)?.name ?? 'Custom';
+  }, [activeScenarioId]);
+  const stickerPct = Math.min(
+    100,
+    Math.max(0, Math.round((storeState.settings.stickerShare ?? 0.7) * 100))
+  );
+  const allSplitsOk = useMemo(() => {
+    return entrances.every((ent) => {
+      const split = getEntranceSplit(storeState.settings, storeState.map, ent.id);
+      let sum = split[DIRECT_KEY] ?? 0;
+      for (const d of dropoffs) {
+        sum += split[d.id] ?? 0;
+      }
+      return Math.abs(Math.round(sum * 10) / 10 - 100) < 0.1;
+    });
+  }, [entrances, dropoffs, storeState.settings, storeState.map]);
+  const hasAnyCars = useMemo(() => {
+    return entrances.some((ent) => (storeState.settings.spawnRates?.[ent.id] ?? 0) > 0);
+  }, [entrances, storeState.settings.spawnRates]);
+  const canStart = allSplitsOk && hasAnyCars && routeValidation.isValid;
+  const disabledReason = useMemo(() => {
+    if (!allSplitsOk) {
+      return 'Fix destination splits in Settings so every gate adds up to 100%.';
+    }
+    if (!hasAnyCars) {
+      return 'Raise at least one gate above 0 cars/min in Settings.';
+    }
+    if (!routeValidation.isValid) {
+      return routeValidation.errorMessage || 'One or more gates cannot reach a destination.';
+    }
+    return '';
+  }, [allSplitsOk, hasAnyCars, routeValidation]);
+
+  const handleIdleStartClick = () => {
+    if (!canStart) return;
+    startNewRun();
+  };
 
   // Load reference image when URL changes
   useEffect(() => {
@@ -948,6 +1053,11 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
         canvasRef.current.style.height = `${cssH}px`;
       }
       offscreenDirtyRef.current = true;
+
+      if (!hasInitialFittedRef.current) {
+        hasInitialFittedRef.current = true;
+        handleFit();
+      }
     };
 
     handleResize();
@@ -960,7 +1070,7 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
       observer.disconnect();
       window.removeEventListener('resize', handleResize);
     };
-  }, []);
+  }, [handleFit]);
 
   // Single persistent requestAnimationFrame loop (reads changing values from refs, never torn down)
   useEffect(() => {
@@ -976,176 +1086,9 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
   return (
     <section
       ref={containerRef}
-      className="flex-1 h-full bg-[#EBF0F5] relative overflow-hidden select-none min-w-0"
+      className="w-full h-full bg-[#EBF0F5] relative overflow-hidden select-none"
     >
-      {/* Top Floating Overlay Bar (Status badge, Clock, View toggles) */}
-      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none">
-        {/* Status Badge & Clock */}
-        <div className="pointer-events-auto flex items-center bg-white/95 backdrop-blur rounded-lg px-3 py-1.5 border border-[#E2E6EF] gap-3 shadow-sm">
-          {/* Status Badge */}
-          {isRunning && (
-            <div className="flex items-center gap-1.5" id="statusBadge">
-              <span className="w-2 h-2 rounded-full bg-[#25A76B] animate-pulse" />
-              <span className="text-[12px] font-semibold text-[#25A76B] uppercase tracking-wider">
-                RUNNING
-              </span>
-            </div>
-          )}
-
-          {isPaused && (
-            <div className="flex items-center gap-1.5" id="statusBadge">
-              <span className="w-2 h-2 rounded-full bg-[#F59E0B]" />
-              <span className="text-[12px] font-semibold text-[#D97706] uppercase tracking-wider">
-                PAUSED
-              </span>
-            </div>
-          )}
-
-          {isComplete && (
-            <div className="flex items-center gap-1.5" id="statusBadge">
-              <CheckCircle2 size={13} className="text-[#254B98]" />
-              <span className="text-[12px] font-semibold text-[#254B98] uppercase tracking-wider">
-                COMPLETE
-              </span>
-            </div>
-          )}
-
-          {isIdle && (
-            <div className="flex items-center gap-1.5" id="statusBadge">
-              <span className="w-2 h-2 rounded-full bg-[#6B7A99]" />
-              <span className="text-[12px] font-semibold text-[#6B7A99] uppercase tracking-wider">
-                IDLE
-              </span>
-            </div>
-          )}
-
-          <div className="h-3.5 w-[1px] bg-[#E2E6EF]" />
-
-          {/* Timer Display */}
-          <div className="flex items-center gap-1.5">
-            <Timer size={15} className="text-[#6B7A99]" />
-            <span
-              className="text-[15px] font-semibold text-[#111C2D] tracking-tight tabular-nums"
-              id="clockDisplay"
-            >
-              {formatTimer(isComplete ? liveMetrics.simDurationSeconds : simTimeSeconds)}
-            </span>
-          </div>
-
-          {/* Amber label when map is edited while running or paused */}
-          {isMapEditedWhileRunning && (isRunning || isPaused) && (
-            <>
-              <div className="h-3.5 w-[1px] bg-[#E2E6EF]" />
-              <div className="flex items-center gap-1.5 text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[11px] font-medium">
-                <AlertTriangle size={12} className="text-[#F59E0B] shrink-0" />
-                <span>Layout edited. Changes apply to the next run.</span>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Top view toggles (36px tall, 8px radius) */}
-        <div className="pointer-events-auto flex items-center bg-white/95 backdrop-blur rounded-lg p-1 border border-[#E2E6EF] gap-1 shadow-sm">
-          <button
-            type="button"
-            onClick={() => onToggleHeatmap(false)}
-            className={`px-3 h-9 rounded-lg text-[13px] transition-all duration-150 cursor-pointer active:scale-95 flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1 ${
-              !showHeatmap
-                ? 'bg-[#254B98] text-white font-medium'
-                : 'text-[#6B7A99] hover:text-[#111C2D] hover:bg-gray-100'
-            }`}
-          >
-            Vehicle view
-          </button>
-          <button
-            type="button"
-            onClick={() => onToggleHeatmap(true)}
-            className={`px-3 h-9 rounded-lg text-[13px] transition-all duration-150 cursor-pointer active:scale-95 flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1 ${
-              showHeatmap
-                ? 'bg-[#254B98] text-white font-medium'
-                : 'text-[#6B7A99] hover:text-[#111C2D] hover:bg-gray-100'
-            }`}
-          >
-            Heatmap overlay
-          </button>
-        </div>
-      </div>
-
-      {/* PRD 4.3 Gridlock Alert Banner */}
-      {isGridlocked && (isRunning || isPaused) && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 bg-red-600 text-white px-4 py-3 rounded-lg shadow-xl flex items-center gap-3 border border-red-700 animate-pulse pointer-events-auto max-w-[560px]">
-          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-            <AlertTriangle size={18} className="text-white" />
-          </div>
-          <div className="flex flex-col text-left mr-2">
-            <span className="text-[13px] font-semibold tracking-tight">Gridlock detected</span>
-            <span className="text-[12px] text-red-100 leading-tight">
-              {gridlockMessage || 'All vehicles stationary for 120 simulated seconds. Traffic flow halted.'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0 ml-auto">
-            <button
-              type="button"
-              onClick={isRunning ? pauseSimulation : resumeSimulation}
-              className="h-9 px-3 bg-white text-red-700 hover:bg-red-50 active:scale-95 text-[12px] font-medium rounded-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            >
-              {isRunning ? 'Pause' : 'Resume'}
-            </button>
-            <button
-              type="button"
-              onClick={stopSimulation}
-              className="h-9 px-3 bg-red-800 hover:bg-red-900 active:scale-95 text-white text-[12px] font-medium rounded-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            >
-              Stop
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* PRD 4.3 Edge-Case Notice Banner (Zero roads, No entrance, No exit, All exits blocked, Zero spawn rate) */}
-      {!isGridlocked && activeEdgeCase && (isRunning || isPaused) && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-lg shadow-md border border-amber-300 flex items-center gap-3 max-w-[580px] pointer-events-auto">
-          <AlertTriangle size={18} className="text-amber-500 shrink-0" />
-          <div className="flex flex-col text-left">
-            <span className="text-[13px] font-medium text-[#111C2D]">
-              {activeEdgeCase.type === 'zero-roads'
-                ? 'Zero roads configured'
-                : activeEdgeCase.type === 'no-entrance'
-                ? 'No entrance configured'
-                : activeEdgeCase.type === 'no-exit'
-                ? 'No exit configured'
-                : activeEdgeCase.type === 'no-drop-off'
-                ? 'No drop-off zone'
-                : activeEdgeCase.type === 'no-valid-path'
-                ? 'No valid path'
-                : activeEdgeCase.type === 'all-exits-blocked'
-                ? 'All exits blocked'
-                : activeEdgeCase.type === 'zero-spawn-rate'
-                ? 'Zero spawn rate'
-                : 'Edge case active'}
-            </span>
-            <span className="text-[12px] text-[#6B7A99] leading-snug">
-              {activeEdgeCase.message}
-            </span>
-          </div>
-          {(activeEdgeCase.type === 'zero-roads' ||
-            activeEdgeCase.type === 'no-entrance' ||
-            activeEdgeCase.type === 'no-exit' ||
-            activeEdgeCase.type === 'no-drop-off' ||
-            activeEdgeCase.type === 'no-valid-path' ||
-            activeEdgeCase.type === 'all-exits-blocked') && (
-            <button
-              type="button"
-              onClick={() => setActiveTab('map-setup')}
-              className="ml-auto shrink-0 h-9 px-3 bg-[#254B98] hover:bg-[#1d3b7a] active:scale-95 text-white rounded-lg text-[12px] font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98]"
-            >
-              Edit map
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* HTML5 Canvas element */}
+      {/* HTML5 Canvas element filling the full workspace */}
       <canvas
         ref={canvasRef}
         onPointerDown={handlePointerDown}
@@ -1156,218 +1099,309 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
         className={`w-full h-full block ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
       />
 
-      {/* Idle Prompt Card with Route Validation per ENGINE SPEC */}
-      {isIdle && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-3 bg-white/95 backdrop-blur-md px-6 py-5 rounded-lg border border-[#E2E6EF] shadow-lg pointer-events-auto text-center max-w-[380px] w-full">
-          <div
-            className={`w-12 h-12 rounded-full flex items-center justify-center ${
-              !routeValidation.isValid
-                ? 'bg-red-50 text-[#EF4444]'
-                : 'bg-[#25A76B]/10 text-[#25A76B]'
+      {/* Floating Top-Left Card: Scenario summary, locked notice, Heatmap toggle */}
+      <div className="absolute top-3 left-3 z-30 w-[264px] bg-white/95 backdrop-blur border border-[#E2E6EF] rounded-[12px] shadow-md p-3.5 flex flex-col gap-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[14px] font-semibold text-[#111C2D] truncate">
+              {activeScenarioName}
+            </div>
+            <div className="text-[12px] text-[#6B7A99]">
+              {stickerPct}% sticker · {storeState.settings.simDurationMin || 30} min
+            </div>
+          </div>
+        </div>
+
+        {/* Gate arrival rates */}
+        {entrances.length > 0 && (
+          <div className="pt-2 border-t border-[#E2E6EF] flex flex-col gap-1">
+            {entrances.map((ent) => {
+              const rate = storeState.settings.spawnRates?.[ent.id] ?? 0;
+              return (
+                <div
+                  key={ent.id}
+                  className="flex items-center justify-between gap-2 text-[12px]"
+                >
+                  <span className="text-[#6B7A99] truncate">{cleanName(ent.name)}</span>
+                  <span className="font-medium text-[#111C2D] tabular-nums shrink-0">
+                    {rate} {rate === 1 ? 'car/min' : 'cars/min'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Settings locked while running */}
+        {(isRunning || isPaused) && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#F5F6F8] border border-[#E2E6EF] text-[12px] text-[#6B7A99]">
+            <Lock size={13} className="text-[#254B98] shrink-0" />
+            <span>Settings locked while running</span>
+          </div>
+        )}
+
+        {/* Layout edited mid-run notice */}
+        {isMapEditedWhileRunning && (isRunning || isPaused) && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/40 text-[12px] text-[#B45309]">
+            <AlertTriangle size={13} className="text-[#F59E0B] shrink-0" />
+            <span>Layout edited. Changes apply to the next run.</span>
+          </div>
+        )}
+
+        {/* Heatmap toggle */}
+        <div className="pt-2 border-t border-[#E2E6EF] flex items-center justify-between gap-2">
+          <span className="text-[13px] font-medium text-[#111C2D]">Heatmap</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showHeatmap}
+            onClick={() => onToggleHeatmap(!showHeatmap)}
+            aria-label="Toggle heatmap"
+            className={`min-h-[36px] px-2.5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors hover:bg-[#F5F6F8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] ${
+              showHeatmap ? 'text-[#254B98]' : 'text-[#6B7A99]'
             }`}
           >
-            {!routeValidation.isValid ? (
-              <AlertTriangle size={24} className="text-[#EF4444]" />
-            ) : (
-              <Play size={24} className="fill-[#25A76B] translate-x-[1px]" />
-            )}
-          </div>
-          <div className="flex flex-col gap-1">
-            <h3 className="text-[16px] font-medium text-[#111C2D]">
-              {!routeValidation.isValid ? 'Route validation failed' : 'Ready to simulate'}
-            </h3>
-            <p className="text-[12px] text-[#6B7A99] leading-snug">
-              {storeState.map.roadSegments.length === 0
-                ? 'Zero roads configured. You can simulate to verify empty map handling, or add roads in Map setup.'
-                : !routeValidation.isValid
-                ? 'One or more entrances cannot route vehicles to destinations along drawn paths.'
-                : 'Generate dynamic traffic flow, drop-off dynamics, and bottleneck analytics.'}
-            </p>
-          </div>
-
-          {/* Validation shown before Run per entrance */}
-          {routeValidation.entranceSummaries.length > 0 && (
-            <div className="w-full bg-[#F5F6F8] border border-[#E2E6EF] rounded-lg p-3 flex flex-col gap-2 text-left text-[12px]">
-              <span className="font-medium text-[#111C2D]">Route eligibility</span>
-              {routeValidation.entranceSummaries.map((s) => (
-                <div key={s.entranceId} className="flex flex-col gap-0.5">
-                  <div className="flex items-center justify-between text-[#111C2D]">
-                    <span className="font-medium">{s.entranceName}:</span>
-                    {s.error ? (
-                      <span className="text-[#EF4444] font-medium">0 routes found</span>
-                    ) : s.stickerOnly ? (
-                      <span className="text-[#D97706] font-medium">Sticker holders only</span>
-                    ) : s.nonStickerOnly ? (
-                      <span className="text-[#D97706] font-medium">Non-sticker only</span>
-                    ) : (
-                      <span className="text-[#6B7A99] font-medium tabular-nums">
-                        {s.stickerRoutesCount} sticker, {s.nonStickerRoutesCount} non-sticker
-                      </span>
-                    )}
-                  </div>
-                  {s.error && (
-                    <span className="text-[#EF4444] text-[12px] leading-tight font-medium">
-                      {s.error}
-                    </span>
-                  )}
-                  {s.truncated && (
-                    <span className="text-[#D97706] text-[12px] italic">
-                      Route list truncated at 200
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Error callout when 0 routes */}
-          {!routeValidation.isValid && (
-            <div className="w-full bg-red-50 border border-red-200 text-[#EF4444] p-2.5 rounded-lg text-[12px] text-left flex items-start gap-2">
-              <AlertTriangle size={15} className="shrink-0 mt-0.5" />
-              <span>{routeValidation.errorMessage || 'Cannot run: one or more entrances have 0 valid routes.'}</span>
-            </div>
-          )}
-
-          <button
-            type="button"
-            disabled={!routeValidation.isValid}
-            onClick={startSimulation}
-            className={`w-full h-9 px-4 rounded-lg text-[13px] font-medium flex items-center justify-center gap-2 transition-all ${
-              routeValidation.isValid
-                ? 'bg-[#25A76B] hover:bg-[#1f8c59] active:scale-98 text-white cursor-pointer'
-                : 'bg-gray-200 text-[#6B7A99] cursor-not-allowed shadow-none'
-            } focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-2`}
-          >
-            <Play size={16} className={routeValidation.isValid ? 'fill-white stroke-none' : 'fill-gray-400 stroke-none'} />
-            <span>{!routeValidation.isValid ? 'Run disabled' : 'Run simulation'}</span>
+            <span className="text-[12px] font-medium">
+              {showHeatmap ? 'On' : 'Off'}
+            </span>
+            <span
+              className={`w-8 h-4.5 rounded-full p-0.5 flex items-center transition-colors ${
+                showHeatmap ? 'bg-[#254B98] justify-end' : 'bg-[#CBD5E1] justify-start'
+              }`}
+            >
+              <span className="w-3.5 h-3.5 bg-white rounded-full block shadow-xs" />
+            </span>
           </button>
-          <span className="text-[12px] text-[#6B7A99]">Press [Space] to start / pause</span>
-        </div>
-      )}
-
-      {/* Floating Tailback Queue Callout (During run if queue forms) */}
-      {(isRunning || isPaused) && !isGridlocked && peakQueueSeg && peakQueueSeg.queueCount >= 4 && (
-        <div className="absolute top-[65%] left-[22%] z-30 bg-white/95 backdrop-blur px-3 py-2 rounded-lg border border-[#EF4444]/30 flex items-center gap-2 shadow-sm">
-          <span className="flex h-2 w-2 rounded-full bg-[#EF4444] animate-pulse" />
-          <div className="flex flex-col">
-            <span className="text-[12px] text-[#EF4444] font-medium leading-tight">
-              {peakQueueSeg.queueCount} vehicles waiting
-            </span>
-            <span className="text-[12px] text-[#6B7A99] leading-tight">
-              Queue tailback: {peakQueueSeg.segmentName}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Final Simulation Summary Notification Callout (When complete) */}
-      {isComplete && (
-        <div className="absolute top-[65%] left-[22%] z-30 bg-white/95 backdrop-blur px-3.5 py-2.5 rounded-lg border border-[#254B98]/30 flex items-center gap-3 shadow-sm pointer-events-auto">
-          <span className="flex h-2 w-2 rounded-full bg-[#254B98] shrink-0" />
-          <div className="flex flex-col">
-            <span className="text-[12px] text-[#254B98] font-medium leading-tight">
-              {liveMetrics.totalCompletedVehicles} vehicles processed
-            </span>
-            <span className="text-[12px] text-[#6B7A99] leading-tight">
-              Evaluation session finalized
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={stopSimulation}
-            className="ml-2 h-7 px-2.5 rounded-md bg-[#F5F6F8] hover:bg-gray-200 text-[12px] font-medium text-[#111C2D] border border-[#E2E6EF] transition-colors cursor-pointer active:scale-95"
-            title="Clear run display and return to idle"
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
-      {/* Scale Bar & Canvas Legend (bottom-left, 12px gap) */}
-      <div className="absolute bottom-3 left-3 z-30 flex flex-col gap-3 pointer-events-none">
-        <div className="pointer-events-auto">
-          <ScaleBar metersPerUnit={metersPerUnit} screenPixelsPerUnit={currentFinalScale} />
-        </div>
-        <div className="pointer-events-auto bg-white/95 backdrop-blur px-3.5 py-2.5 rounded-lg border border-[#E2E6EF] flex flex-col gap-2 shadow-sm">
-          {/* Vehicles Legend */}
-          <div className="flex items-center gap-3">
-            <span className="text-[12px] text-[#6B7A99] font-medium">Vehicles:</span>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-2 rounded-[2px] bg-white border border-[#0F172A] inline-block" />
-              <span className="text-[12px] text-[#111C2D]">Sticker (white)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-2 rounded-[2px] bg-[#38BDF8] border border-[#0F172A] inline-block" />
-              <span className="text-[12px] text-[#111C2D]">Non-sticker (blue)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-2 rounded-[2px] bg-white border border-[#F59E0B] inline-block" />
-              <span className="text-[12px] text-[#111C2D]">Drop-off (amber)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3.5 h-2 rounded-[2px] bg-white border border-[#0F172A] relative inline-block overflow-hidden">
-                <span className="absolute left-0 top-0 bottom-0 w-[2.5px] bg-[#EF4444]" />
-              </span>
-              <span className="text-[12px] text-[#111C2D]">Queued</span>
-            </div>
-          </div>
-
-          {/* Road access types line style legend */}
-          <div className="flex items-center gap-3 pt-1.5 border-t border-gray-100">
-            <span className="text-[12px] text-[#6B7A99] font-medium">Roads:</span>
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-1.5 rounded-xs bg-[#3B4658] border border-white" />
-              <span className="text-[12px] text-[#111C2D]">Shared</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-1.5 rounded-xs bg-[#3B4658] border border-dashed border-[#2563EB]" />
-              <span className="text-[12px] text-[#111C2D]">Sticker-only</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-1.5 rounded-xs bg-[#3B4658] border border-dotted border-[#D97706]" />
-              <span className="text-[12px] text-[#111C2D]">Non-sticker</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <svg width="18" height="6" className="shrink-0 overflow-visible">
-                <path d="M 3 0 L 7.5 3 L 3 6" fill="none" stroke="#FFFFFF" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M 10 0 L 14.5 3 L 10 6" fill="none" stroke="#FFFFFF" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span className="text-[12px] text-[#111C2D]">One-way</span>
-            </div>
-          </div>
-
-          {/* Heatmap (road usage) Legend */}
-          <div className="flex items-center gap-3 pt-1.5 border-t border-gray-100">
-            <span className="text-[12px] text-[#6B7A99] font-medium">Heatmap (road usage):</span>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-2 rounded-xs bg-[#25A76B]" />
-              <span className="text-[12px] text-[#111C2D]">Under 60% of capacity</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-2 rounded-xs bg-[#F59E0B]" />
-              <span className="text-[12px] text-[#111C2D]">60 to 80%</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-2 rounded-xs bg-[#EF4444]" />
-              <span className="text-[12px] text-[#111C2D]">Over 80%</span>
-            </div>
-          </div>
         </div>
       </div>
 
-      {/* Grid Unit Tag on Simulation Canvas (PRD 3.1.9) */}
-      {!hasReferenceImage && (
-        <div className="absolute top-3 left-48 z-30 pointer-events-none">
-          <span className="px-2.5 py-1.5 rounded-lg bg-white/95 backdrop-blur text-[12px] font-medium text-[#6B7A99] border border-[#E2E6EF] shadow-sm flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 border border-[#254B98] bg-[#254B98]/10 rounded-xs inline-block" />
-            <span>1 cell = {currentCellMeters} m</span>
-          </span>
+      {/* Bottom-Left: Scale Bar, Hide/Show legend button, and 3-row Legend (max 380px) */}
+      <div className="absolute bottom-3 left-3 z-30 flex flex-col items-start gap-2.5 pointer-events-none max-w-[380px]">
+        <div className="pointer-events-auto flex items-center gap-2">
+          <ScaleBar metersPerUnit={metersPerUnit} screenPixelsPerUnit={currentFinalScale} />
+          <button
+            type="button"
+            onClick={() => setShowLegend((prev) => !prev)}
+            className="h-9 px-3 rounded-lg bg-white/95 backdrop-blur border border-[#E2E6EF] text-[12px] font-medium text-[#111C2D] hover:bg-[#F5F6F8] shadow-sm cursor-pointer transition-colors"
+          >
+            {showLegend ? 'Hide legend' : 'Show legend'}
+          </button>
         </div>
-      )}
+
+        {showLegend && (
+          <div className="pointer-events-auto w-full max-w-[380px] bg-white/95 backdrop-blur px-3.5 py-2.5 rounded-[12px] border border-[#E2E6EF] flex flex-col gap-2 shadow-sm">
+            {/* Vehicles Legend */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-[12px] text-[#6B7A99] font-medium">Vehicles:</span>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3.5 h-2 rounded-[2px] bg-white border border-[#0F172A] inline-block shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">Sticker holder (white)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3.5 h-2 rounded-[2px] bg-[#38BDF8] border border-[#0F172A] inline-block shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">Visitor (blue)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3.5 h-2 rounded-[2px] bg-white border border-[#F59E0B] inline-block shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">Drop-off (amber)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3.5 h-2 rounded-[2px] bg-white border border-[#0F172A] relative inline-block overflow-hidden shrink-0">
+                  <span className="absolute left-0 top-0 bottom-0 w-[2.5px] bg-[#EF4444]" />
+                </span>
+                <span className="text-[12px] text-[#111C2D]">Queued</span>
+              </div>
+            </div>
+
+            {/* Road access types line style legend */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1.5 border-t border-[#E2E6EF]/70">
+              <span className="text-[12px] text-[#6B7A99] font-medium">Roads:</span>
+              <div className="flex items-center gap-1.5">
+                <span className="w-4 h-1.5 rounded-xs bg-[#3B4658] border border-white shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">Shared</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-4 h-1.5 rounded-xs bg-[#3B4658] border border-dashed border-[#2563EB] shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">Sticker-only</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-4 h-1.5 rounded-xs bg-[#3B4658] border border-dotted border-[#D97706] shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">Non-sticker</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <svg width="18" height="6" className="shrink-0 overflow-visible">
+                  <path
+                    d="M 3 0 L 7.5 3 L 3 6"
+                    fill="none"
+                    stroke="#6B7A99"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M 10 0 L 14.5 3 L 10 6"
+                    fill="none"
+                    stroke="#6B7A99"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="text-[12px] text-[#111C2D]">One-way</span>
+              </div>
+            </div>
+
+            {/* Heatmap (road usage) Legend */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1.5 border-t border-[#E2E6EF]/70">
+              <span className="text-[12px] text-[#6B7A99] font-medium">
+                Heatmap (road usage):
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-2 rounded-xs bg-[#25A76B] shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">Under 60% of capacity</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-2 rounded-xs bg-[#F59E0B] shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">60 to 80%</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-2 rounded-xs bg-[#EF4444] shrink-0" />
+                <span className="text-[12px] text-[#111C2D]">Over 80%</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Floating Bottom-Centre Control Bar */}
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-2 pointer-events-none">
+        {isIdle && !canStart && disabledReason && (
+          <div className="pointer-events-auto px-3 py-1.5 rounded-lg bg-white/95 backdrop-blur border border-[#EF4444]/40 text-[#EF4444] text-[12px] font-medium shadow-sm flex items-center gap-1.5 max-w-[440px]">
+            <AlertTriangle size={14} className="shrink-0" />
+            <span>{disabledReason}</span>
+          </div>
+        )}
+
+        <div className="pointer-events-auto flex items-center gap-2 bg-white/95 backdrop-blur border border-[#E2E6EF] rounded-[12px] p-1.5 shadow-md">
+          {isIdle && (
+            <>
+              <button
+                type="button"
+                disabled={!canStart}
+                onClick={handleIdleStartClick}
+                title={canStart ? 'Start simulation' : disabledReason}
+                className={`h-9 px-4 rounded-lg text-[13px] font-semibold flex items-center gap-2 transition-all ${
+                  canStart
+                    ? 'bg-[#25A76B] hover:bg-[#1f8c59] active:scale-98 text-white cursor-pointer'
+                    : 'bg-[#E2E6EF] text-[#6B7A99] cursor-not-allowed'
+                } focus:outline-none focus-visible:ring-2 focus-visible:ring-[#25A76B] focus-visible:ring-offset-1`}
+              >
+                <Play size={14} className="fill-current shrink-0" />
+                <span>Start simulation</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className="h-9 px-3.5 rounded-lg border border-[#E2E6EF] bg-white hover:bg-[#F5F6F8] text-[13px] font-medium text-[#111C2D] flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <SlidersHorizontal size={14} className="text-[#6B7A99]" />
+                <span>Change settings</span>
+              </button>
+            </>
+          )}
+
+          {(isRunning || isPaused) && (
+            <>
+              <button
+                type="button"
+                onClick={isRunning ? pauseSimulation : resumeSimulation}
+                title={isRunning ? 'Pause (Space)' : 'Resume (Space)'}
+                className="h-9 px-3.5 rounded-lg bg-[#E7EEFF] hover:bg-[#dce6ff] text-[#254B98] text-[13px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                {isRunning ? (
+                  <>
+                    <Pause size={14} className="fill-current shrink-0" />
+                    <span>Pause</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={14} className="fill-current shrink-0" />
+                    <span>Resume</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={stopSimulation}
+                title="Stop simulation"
+                className="h-9 px-3 rounded-lg border border-[#E2E6EF] bg-white hover:bg-[#F5F6F8] text-[#111C2D] text-[13px] font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <Square size={13} className="fill-current shrink-0" />
+                <span>Stop</span>
+              </button>
+
+              <div className="h-5 w-[1px] bg-[#E2E6EF]" />
+
+              <div
+                className="flex items-center gap-1"
+                role="group"
+                aria-label="Simulation speed"
+              >
+                {SPEED_OPTIONS.map((spd) => {
+                  const active = Math.abs(simSpeed - spd) < 0.01;
+                  return (
+                    <button
+                      key={spd}
+                      type="button"
+                      onClick={() => setSimSpeed(spd)}
+                      aria-pressed={active}
+                      className={`h-9 px-2.5 rounded-lg text-[12px] font-semibold tabular-nums cursor-pointer transition-colors ${
+                        active
+                          ? 'bg-[#254B98] text-white'
+                          : 'text-[#6B7A99] hover:text-[#111C2D] hover:bg-[#F5F6F8]'
+                      }`}
+                    >
+                      {spd}x
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {isComplete && (
+            <>
+              <button
+                type="button"
+                onClick={() => setActiveTab('results')}
+                className="h-9 px-4 rounded-lg bg-[#25A76B] hover:bg-[#1f8c59] active:scale-98 text-white text-[13px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
+              >
+                <BarChart3 size={15} className="shrink-0" />
+                <span>See results</span>
+              </button>
+              <button
+                type="button"
+                disabled={!canStart}
+                onClick={startNewRun}
+                title={canStart ? 'Run simulation again' : disabledReason}
+                className={`h-9 px-3.5 rounded-lg border border-[#E2E6EF] text-[13px] font-medium flex items-center gap-1.5 transition-colors ${
+                  canStart
+                    ? 'bg-white hover:bg-[#F5F6F8] text-[#111C2D] cursor-pointer'
+                    : 'bg-[#F5F6F8] text-[#6B7A99] cursor-not-allowed'
+                }`}
+              >
+                <Play size={14} className="fill-current shrink-0" />
+                <span>Run again</span>
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Scale & Zoom Controls (bottom-right) */}
       <div
-        className="absolute bottom-3 right-3 z-30 flex items-center bg-white/95 backdrop-blur rounded-lg p-1 border border-[#E2E6EF] gap-1 shadow-sm"
+        className="absolute bottom-3 right-3 z-30 flex items-center bg-white/95 backdrop-blur rounded-[12px] p-1 border border-[#E2E6EF] gap-1 shadow-sm"
         title="Scroll to zoom, drag to pan"
       >
         <span className="px-2 text-[12px] font-medium text-[#111C2D] select-none">
@@ -1399,8 +1433,8 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
           type="button"
           onClick={handleFit}
           className="px-2.5 h-9 flex items-center justify-center rounded-lg text-[12px] font-medium text-[#6B7A99] hover:text-[#111C2D] hover:bg-[#F5F6F8] active:scale-95 transition-all gap-1 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1"
-          title="Fit to panel (Scroll to zoom, drag to pan)"
-          aria-label="Fit to panel"
+          title="Fit to screen (Scroll to zoom, drag to pan)"
+          aria-label="Fit to screen"
         >
           <Maximize2 size={14} />
           <span>Fit</span>

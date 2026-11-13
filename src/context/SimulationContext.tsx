@@ -26,7 +26,7 @@ import {
   MapConfig,
 } from '../types/traffic';
 import { getMetersPerUnit } from '../utils/scale';
-import { getEntranceSplit } from '../utils/destinationSplit';
+import { DIRECT_KEY, getEntranceSplit } from '../utils/destinationSplit';
 
 export interface AlertItem {
   id: string;
@@ -381,6 +381,25 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
       return;
     }
 
+    const preCheckSettings = storeStateRef.current.settings;
+    const preCheckMap = storeStateRef.current.map;
+    const preCheckEntrances = (preCheckMap.zoneMarkers || []).filter((m) => m.type === 'entrance');
+    const preCheckDropoffs = (preCheckMap.zoneMarkers || []).filter((m) => m.type === 'dropoff');
+    const hasArrivingCars = preCheckEntrances.some(
+      (ent) => (preCheckSettings.spawnRates?.[ent.id] ?? 0) > 0
+    );
+    const splitsValid = preCheckEntrances.every((ent) => {
+      const split = getEntranceSplit(preCheckSettings, preCheckMap, ent.id);
+      let sum = split[DIRECT_KEY] ?? 0;
+      for (const d of preCheckDropoffs) {
+        sum += split[d.id] ?? 0;
+      }
+      return Math.abs(Math.round(sum * 10) / 10 - 100) < 0.1;
+    });
+    if (!hasArrivingCars || !splitsValid) {
+      return;
+    }
+
     // Reset old run display (same as stopSimulation)
     engineRef.current = null;
     accumulatorRef.current = 0;
@@ -556,9 +575,12 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
     };
   }, [computeAlerts, handleCompletion]);
 
-  // Global Keyboard Shortcuts (Space for pause/resume/start/startNewRun)
+  // Global Keyboard Shortcuts (Space for pause/resume/start on Simulation tab)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (storeStateRef.current.activeTab !== 'simulation') return;
+      if (typeof document !== 'undefined' && document.querySelector('[role="dialog"]')) return;
+
       const target = e.target as HTMLElement | null;
       const isInput =
         target &&

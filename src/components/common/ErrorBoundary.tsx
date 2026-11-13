@@ -6,7 +6,7 @@
  * - "Export map JSON" button to extract and back up the current map state
  */
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { SAMPLE_MAP } from '../../utils/sampleMap';
 import { MapConfig } from '../../types/traffic';

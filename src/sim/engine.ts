@@ -1311,8 +1311,8 @@ export function createSimulation(
         const capacity = Math.max(1, Math.round((segLengthMeters / EFFECTIVE_SPACE_M) * (seg.lanes || 1)));
 
         let severity: 'critical' | 'moderate' | 'clear' = 'clear';
-        if (peakQueue > 12) severity = 'critical';
-        else if (peakQueue > 4) severity = 'moderate';
+        if (peakQueue >= 15) severity = 'critical';
+        else if (peakQueue >= 6) severity = 'moderate';
 
         return {
           segmentId: seg.id,

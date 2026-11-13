@@ -11,7 +11,7 @@ export interface Point {
 export type FlowDirection = 'one-way' | 'two-way';
 export type AccessType = 'shared' | 'sticker-only' | 'non-sticker-only';
 export type ZoneType = 'entrance' | 'exit' | 'dropoff';
-export type ActiveTab = 'map-setup' | 'simulation' | 'results';
+export type ActiveTab = 'map-setup' | 'settings' | 'simulation' | 'results';
 export type SimulationStatus = 'idle' | 'running' | 'paused' | 'completed';
 
 export interface RoadSegment {
@@ -45,6 +45,8 @@ export interface SpawnRates {
   [entranceId: string]: number; // vehicles per minute
 }
 
+export type ScenarioId = 'light' | 'normal' | 'rush' | 'custom';
+
 export interface SimulationSettings {
   defaultSpeedLimit: number; // default 10 km/h
   spawnRates: SpawnRates;
@@ -54,6 +56,7 @@ export interface SimulationSettings {
   standstillGapMeters?: number; // default 2.0 m
   simDurationMin: number; // default 30 minutes
   layoutName: string; // e.g. 'Layout A'
+  scenarioId?: ScenarioId;
   /** @deprecated Replaced by destinationSplits. Kept for backwards compatibility with saved maps and imports. */
   dropoffShare?: number;
   destinationSplits?: Record<string, Record<string, number>>; // entranceId -> (dropoffMarkerId | 'direct') -> percentage (0..100)

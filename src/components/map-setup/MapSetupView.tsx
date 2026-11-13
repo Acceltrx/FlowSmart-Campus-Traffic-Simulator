@@ -30,8 +30,7 @@ import {
   RotateCcw,
   Sparkles,
   Ruler,
-  LogIn,
-  LogOut,
+  CheckCircle2,
   ArrowRight,
   X,
 } from 'lucide-react';
@@ -59,9 +58,6 @@ export const CarPersonIcon: React.FC<{ size?: number; className?: string }> = ({
 
 import { useTrafficStore, sanitizeDropoffSettings } from '../../context/TrafficStoreContext';
 import { useSimulation } from '../../context/SimulationContext';
-import { VehicleMixControl } from '../common/VehicleMixControl';
-import { DestinationSplitControl } from '../common/DestinationSplitControl';
-import { DropoffBehaviorControl } from '../common/DropoffBehaviorControl';
 import { migrateDropoffShare, sanitizeDestinationSplits } from '../../utils/destinationSplit';
 import {
   RoadSegment,
@@ -73,10 +69,8 @@ import {
 } from '../../types/traffic';
 import {
   distance,
-  snapToNearbyNode,
   countIntersections,
   splitRoadSegment,
-  splitRoadAt,
   samplePolyline,
   polylineLength,
   polylineMidpoint,
@@ -84,13 +78,11 @@ import {
 import { validateAndLoadReferenceImage } from '../../utils/imageUtils';
 import { useWireTool } from '../../hooks/useWireTool';
 import {
-  DEFAULT_METERS_PER_UNIT,
   getMetersPerUnit,
   formatScale,
   describeScale,
   roadWidthUnits,
   edgeLineWidthUnits,
-  SPEED_LIMIT_OPTIONS_KMH,
   DEFAULT_SPEED_KMH,
   clampSpeedKmH,
 } from '../../utils/scale';
@@ -518,14 +510,13 @@ export const MapSetupView: React.FC = () => {
     updateMap,
     updateSettings,
     setActiveTab,
-    resetAll,
     loadSampleMap,
     setReferenceImageUrl,
     speedAdjustedNotice,
     setSpeedAdjustedNotice,
     dismissSpeedAdjustedNotice,
   } = useTrafficStore();
-  const { stopSimulation } = useSimulation();
+  const { stopSimulation, routeValidation } = useSimulation();
 
   const { map, settings, referenceImageUrl } = state;
 
@@ -562,7 +553,6 @@ export const MapSetupView: React.FC = () => {
   const panRef = useRef<Point>({ x: 0, y: 0 });
   const latestPanRef = useRef<Point>({ x: 0, y: 0 });
   const panRafIdRef = useRef<number | null>(null);
-  const cursorRafIdRef = useRef<number | null>(null);
 
   // Sync refs with state
   useEffect(() => {
@@ -689,8 +679,7 @@ export const MapSetupView: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
 
-  // Reset confirmation modal
-  const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
+  // New layout confirmation modal
   const [showNewLayoutConfirm, setShowNewLayoutConfirm] = useState<boolean>(false);
 
   // New layout confirm handler (PRD / FlowSmart requirements)
@@ -850,7 +839,6 @@ export const MapSetupView: React.FC = () => {
         setSelectedRoadId(null);
         setSelectedMarkerId(null);
         setActiveTool('select');
-        setShowResetConfirm(false);
       } else if (e.code === 'Space' && !e.repeat && !isInput) {
         e.preventDefault();
         setIsSpacePressed(true);
@@ -1699,19 +1687,6 @@ export const MapSetupView: React.FC = () => {
     setMapScale(newScale);
   };
 
-  // Custom grid cell input change helper
-  const handleCustomCellChange = (metersStr: string) => {
-    setCustomCellInput(metersStr);
-    const parsed = parseFloat(metersStr);
-    if (!isNaN(parsed) && parsed >= 0.5 && parsed <= 200) {
-      setCustomCellError(null);
-      const newScale = parsed / GRID_CELL_PX;
-      setMapScale(newScale);
-    } else if (isNaN(parsed) || parsed < 0.5 || parsed > 200) {
-      setCustomCellError('Enter a value between 0.5 and 200 m per cell.');
-    }
-  };
-
   // Selected road details & metrics (updates live during vertex drag)
   const selectedRoad = useMemo(
     () => wireTool.effectiveRoadSegments.find((r) => r.id === selectedRoadId) || null,
@@ -1813,12 +1788,12 @@ export const MapSetupView: React.FC = () => {
   return (
     <div className="flex-1 flex w-full h-[calc(100vh-48px)] overflow-hidden select-none">
       {/* 1. Left utility sidebar (200px width, 16px padding, 20px section spacing) */}
-      <aside className="w-[200px] shrink-0 bg-white border-r border-[#E2E6EF] p-4 flex flex-col justify-between overflow-y-auto z-20 select-none">
+      <aside className="w-[200px] shrink-0 bg-white border-r border-[#E2E6EF] p-4 flex flex-col overflow-y-auto z-20 select-none">
         <div className="flex flex-col space-y-5">
-          {/* Tools Section */}
+          {/* Tools Section: 2x2 grid of 36px buttons (Road, Select / Erase, Split) */}
           <div className="flex flex-col space-y-3">
             <h2 className="text-[16px] font-medium text-[#111C2D]">Tools</h2>
-            <div className="flex flex-col gap-2" id="tools-group">
+            <div className="grid grid-cols-2 gap-2" id="tools-group">
               {/* Road Tool (36px tall) */}
               <button
                 type="button"
@@ -1827,14 +1802,14 @@ export const MapSetupView: React.FC = () => {
                   setSelectedRoadId(null);
                   setSelectedMarkerId(null);
                 }}
-                className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors cursor-pointer text-[13px] ${
+                className={`flex items-center justify-center gap-1.5 px-2 h-9 rounded-lg border transition-colors cursor-pointer text-[13px] ${
                   activeTool === 'road'
-                    ? 'bg-[#254B98] text-white font-medium'
-                    : 'text-[#111C2D] hover:bg-[#F5F6F8]'
+                    ? 'bg-[#E7EEFF] border-[#254B98] text-[#254B98] font-medium'
+                    : 'bg-white border-[#E2E6EF] text-[#111C2D] hover:bg-[#F5F6F8]'
                 }`}
-                title="Click points, double-click to finish road"
+                title="Click points, double-click to finish the road"
               >
-                <Edit3 size={16} />
+                <Edit3 size={15} className="shrink-0" />
                 <span>Road</span>
               </button>
 
@@ -1845,14 +1820,14 @@ export const MapSetupView: React.FC = () => {
                   setActiveTool('select');
                   wireTool.setActiveRoadPoints([]);
                 }}
-                className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors cursor-pointer text-[13px] ${
+                className={`flex items-center justify-center gap-1.5 px-2 h-9 rounded-lg border transition-colors cursor-pointer text-[13px] ${
                   activeTool === 'select'
-                    ? 'bg-[#254B98] text-white font-medium'
-                    : 'text-[#111C2D] hover:bg-[#F5F6F8]'
+                    ? 'bg-[#E7EEFF] border-[#254B98] text-[#254B98] font-medium'
+                    : 'bg-white border-[#E2E6EF] text-[#111C2D] hover:bg-[#F5F6F8]'
                 }`}
-                title="Select roads or markers to inspect"
+                title="Click a road or marker to inspect it"
               >
-                <MousePointer size={16} />
+                <MousePointer size={15} className="shrink-0" />
                 <span>Select</span>
               </button>
 
@@ -1863,14 +1838,14 @@ export const MapSetupView: React.FC = () => {
                   setActiveTool('erase');
                   wireTool.setActiveRoadPoints([]);
                 }}
-                className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors cursor-pointer text-[13px] ${
+                className={`flex items-center justify-center gap-1.5 px-2 h-9 rounded-lg border transition-colors cursor-pointer text-[13px] ${
                   activeTool === 'erase'
-                    ? 'bg-[#254B98] text-white font-medium'
-                    : 'text-[#111C2D] hover:bg-[#F5F6F8]'
+                    ? 'bg-[#E7EEFF] border-[#254B98] text-[#254B98] font-medium'
+                    : 'bg-white border-[#E2E6EF] text-[#111C2D] hover:bg-[#F5F6F8]'
                 }`}
                 title="Click a road or marker to delete it"
               >
-                <Eraser size={16} />
+                <Eraser size={15} className="shrink-0" />
                 <span>Erase</span>
               </button>
 
@@ -1881,20 +1856,20 @@ export const MapSetupView: React.FC = () => {
                   setActiveTool('split');
                   wireTool.setActiveRoadPoints([]);
                 }}
-                className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors cursor-pointer text-[13px] ${
+                className={`flex items-center justify-center gap-1.5 px-2 h-9 rounded-lg border transition-colors cursor-pointer text-[13px] ${
                   activeTool === 'split'
-                    ? 'bg-[#254B98] text-white font-medium'
-                    : 'text-[#111C2D] hover:bg-[#F5F6F8]'
+                    ? 'bg-[#E7EEFF] border-[#254B98] text-[#254B98] font-medium'
+                    : 'bg-white border-[#E2E6EF] text-[#111C2D] hover:bg-[#F5F6F8]'
                 }`}
                 title="Click on a road to split at an intersection node"
               >
-                <Split size={16} />
+                <Split size={15} className="shrink-0" />
                 <span>Split</span>
               </button>
             </div>
           </div>
 
-          {/* Zone markers section (36px tall, 8px gaps) */}
+          {/* Zone markers section (36px tall full-width buttons with colored dots) */}
           <div className="flex flex-col space-y-3">
             <h2 className="text-[16px] font-medium text-[#111C2D]">Zone markers</h2>
             <div className="flex flex-col gap-2">
@@ -1905,14 +1880,14 @@ export const MapSetupView: React.FC = () => {
                   setActiveTool('entrance');
                   wireTool.setActiveRoadPoints([]);
                 }}
-                className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors border border-dashed cursor-pointer text-[13px] ${
+                className={`w-full flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors border cursor-pointer text-[13px] ${
                   activeTool === 'entrance'
-                    ? 'bg-[#254B98]/10 border-[#254B98] font-medium'
-                    : 'text-[#111C2D] border-gray-200 hover:bg-[#F5F6F8]'
+                    ? 'bg-[#E7EEFF] border-[#254B98] text-[#254B98] font-medium'
+                    : 'bg-white border-[#E2E6EF] text-[#111C2D] hover:bg-[#F5F6F8]'
                 }`}
                 title="Click to place entrance on map"
               >
-                <LogIn size={16} className="text-[#254B98] shrink-0" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#254B98] shrink-0" />
                 <span>Entrance</span>
               </button>
 
@@ -1923,14 +1898,14 @@ export const MapSetupView: React.FC = () => {
                   setActiveTool('exit');
                   wireTool.setActiveRoadPoints([]);
                 }}
-                className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors border border-dashed cursor-pointer text-[13px] ${
+                className={`w-full flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors border cursor-pointer text-[13px] ${
                   activeTool === 'exit'
-                    ? 'bg-[#25A76B]/10 border-[#25A76B] font-medium'
-                    : 'text-[#111C2D] border-gray-200 hover:bg-[#F5F6F8]'
+                    ? 'bg-[#E7EEFF] border-[#254B98] text-[#254B98] font-medium'
+                    : 'bg-white border-[#E2E6EF] text-[#111C2D] hover:bg-[#F5F6F8]'
                 }`}
                 title="Click to place exit on map"
               >
-                <LogOut size={16} className="text-[#25A76B] shrink-0" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#25A76B] shrink-0" />
                 <span>Exit</span>
               </button>
 
@@ -1941,23 +1916,23 @@ export const MapSetupView: React.FC = () => {
                   setActiveTool('dropoff');
                   wireTool.setActiveRoadPoints([]);
                 }}
-                className={`flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors border border-dashed cursor-pointer text-[13px] ${
+                className={`w-full flex items-center gap-2.5 px-3 h-9 rounded-lg text-left transition-colors border cursor-pointer text-[13px] ${
                   activeTool === 'dropoff'
-                    ? 'bg-[#F59E0B]/10 border-[#F59E0B] font-medium'
-                    : 'text-[#111C2D] border-gray-200 hover:bg-[#F5F6F8]'
+                    ? 'bg-[#E7EEFF] border-[#254B98] text-[#254B98] font-medium'
+                    : 'bg-white border-[#E2E6EF] text-[#111C2D] hover:bg-[#F5F6F8]'
                 }`}
                 title="Click to place drop-off loop on map"
               >
-                <CarPersonIcon size={17} className="text-[#F59E0B] shrink-0" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B] shrink-0" />
                 <span>Drop-off</span>
               </button>
             </div>
 
             {/* Placed Zone Markers List */}
             {map.zoneMarkers.length > 0 && (
-              <div className="flex flex-col space-y-2 pt-3 border-t border-[#E2E6EF]">
+              <div className="flex flex-col space-y-2 pt-2">
                 <span className="text-[12px] text-[#6B7A99] font-medium">Placed markers</span>
-                <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-0.5">
+                <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto pr-0.5">
                   {map.zoneMarkers.map((marker) => (
                     <button
                       key={marker.id}
@@ -1967,20 +1942,22 @@ export const MapSetupView: React.FC = () => {
                         setSelectedRoadId(null);
                         setActiveTool('select');
                       }}
-                      className={`flex items-center gap-2 px-2.5 h-9 rounded-lg text-left text-[12px] transition-colors cursor-pointer ${
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 min-h-[36px] rounded-lg text-left text-[12px] transition-colors cursor-pointer border ${
                         selectedMarkerId === marker.id
-                          ? 'bg-[#254B98]/10 text-[#254B98] font-medium border border-[#254B98]/30'
-                          : 'text-[#111C2D] hover:bg-[#F5F6F8] border border-transparent'
+                          ? 'bg-[#E7EEFF] text-[#254B98] font-medium border-[#254B98]'
+                          : 'bg-[#F5F6F8] text-[#111C2D] hover:bg-[#E2E6EF]/60 border-transparent'
                       }`}
                       title={`Inspect ${marker.name}`}
                     >
-                      {marker.type === 'entrance' ? (
-                        <LogIn size={15} className="text-[#254B98] shrink-0" />
-                      ) : marker.type === 'exit' ? (
-                        <LogOut size={15} className="text-[#25A76B] shrink-0" />
-                      ) : (
-                        <CarPersonIcon size={15} className="text-[#F59E0B] shrink-0" />
-                      )}
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                          marker.type === 'entrance'
+                            ? 'bg-[#254B98]'
+                            : marker.type === 'exit'
+                              ? 'bg-[#25A76B]'
+                              : 'bg-[#F59E0B]'
+                        }`}
+                      />
                       <span className="truncate">{marker.name}</span>
                     </button>
                   ))}
@@ -1988,64 +1965,43 @@ export const MapSetupView: React.FC = () => {
               </div>
             )}
           </div>
-        </div>
 
-        {/* Layers section at bottom */}
-        <div className="pt-4 border-t border-[#E2E6EF] flex flex-col space-y-3">
-          <h2 className="text-[16px] font-medium text-[#111C2D]">Layers</h2>
-          <label className="flex items-center justify-between cursor-pointer py-1">
-            <span className="text-[13px] text-[#111C2D]">Reference image</span>
-            <input
-              type="checkbox"
-              checked={showReferenceImage}
-              onChange={(e) => setShowReferenceImage(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-8 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#25A76B] relative" />
-          </label>
+          {/* Layers section */}
+          <div className="pt-4 border-t border-[#E2E6EF] flex flex-col space-y-2">
+            <h2 className="text-[16px] font-medium text-[#111C2D]">Layers</h2>
+            <label className="flex items-center justify-between cursor-pointer min-h-[36px] py-1">
+              <span className="text-[13px] text-[#111C2D]">Reference image</span>
+              <input
+                type="checkbox"
+                checked={showReferenceImage}
+                onChange={(e) => setShowReferenceImage(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-[30px] h-[18px] bg-[#CBD5E1] peer-focus:outline-none rounded-full peer peer-checked:bg-[#254B98] relative shrink-0 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:w-[14px] after:h-[14px] after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-[12px]" />
+            </label>
 
-          <label className="flex items-center justify-between cursor-pointer py-1">
-            <span className="text-[13px] text-[#111C2D]">Road network</span>
-            <input
-              type="checkbox"
-              checked={showRoadNetwork}
-              onChange={(e) => setShowRoadNetwork(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-8 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#25A76B] relative" />
-          </label>
+            <label className="flex items-center justify-between cursor-pointer min-h-[36px] py-1">
+              <span className="text-[13px] text-[#111C2D]">Road network</span>
+              <input
+                type="checkbox"
+                checked={showRoadNetwork}
+                onChange={(e) => setShowRoadNetwork(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-[30px] h-[18px] bg-[#CBD5E1] peer-focus:outline-none rounded-full peer peer-checked:bg-[#254B98] relative shrink-0 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:w-[14px] after:h-[14px] after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-[12px]" />
+            </label>
 
-          {/* Show lengths toggle */}
-          <label className="flex items-center justify-between cursor-pointer py-1">
-            <span className="text-[13px] text-[#111C2D]">Show lengths</span>
-            <input
-              type="checkbox"
-              checked={showLengths}
-              onChange={(e) => setShowLengths(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-8 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#25A76B] relative" />
-          </label>
-        </div>
-
-        {/* Layout actions at bottom of left panel */}
-        <div className="pt-3 border-t border-[#E2E6EF] flex flex-col space-y-2">
-          <button
-            type="button"
-            onClick={() => setShowNewLayoutConfirm(true)}
-            className="w-full h-9 px-3 rounded-lg bg-blue-50 text-[#254B98] hover:bg-blue-100 border border-blue-200 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-            title="Start a blank layout while preserving run history"
-          >
-            <Plus size={15} />
-            <span>New layout</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowResetConfirm(true)}
-            className="w-full h-9 px-3 rounded-lg text-center text-gray-500 hover:text-red-600 hover:border-red-200 border border-[#E2E6EF] transition-colors text-[12px] font-medium cursor-pointer"
-          >
-            Reset all data
-          </button>
+            <label className="flex items-center justify-between cursor-pointer min-h-[36px] py-1">
+              <span className="text-[13px] text-[#111C2D]">Show lengths</span>
+              <input
+                type="checkbox"
+                checked={showLengths}
+                onChange={(e) => setShowLengths(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-[30px] h-[18px] bg-[#CBD5E1] peer-focus:outline-none rounded-full peer peer-checked:bg-[#254B98] relative shrink-0 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:w-[14px] after:h-[14px] after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-[12px]" />
+            </label>
+          </div>
         </div>
       </aside>
 
@@ -2124,7 +2080,7 @@ export const MapSetupView: React.FC = () => {
             <button
               type="button"
               onClick={cancelCalibration}
-              className="px-2.5 py-1 rounded-lg border border-gray-300 hover:border-red-300 hover:bg-red-50 text-red-600 text-[12px] font-medium cursor-pointer transition-colors"
+              className="h-9 px-3 rounded-lg border border-gray-300 hover:border-red-300 hover:bg-red-50 text-red-600 text-[12px] font-medium cursor-pointer transition-colors flex items-center justify-center"
             >
               Cancel (Esc)
             </button>
@@ -2586,9 +2542,26 @@ export const MapSetupView: React.FC = () => {
           </svg>
         </div>
 
-        {/* Scale Bar (bottom-left) */}
-        <div className="absolute bottom-3 left-3 z-30 pointer-events-auto">
-          <ScaleBar metersPerUnit={metersPerUnit} screenPixelsPerUnit={zoom} />
+        {/* Bottom-left: Active tool hint pill stacked above Scale Bar */}
+        <div className="absolute bottom-12 left-3 z-30 flex flex-col items-start gap-2 pointer-events-none">
+          <div className="bg-white border border-[#E2E6EF] rounded-full px-3 py-1.5 text-[12px] text-[#6B7A99] shadow-xs">
+            {activeTool === 'road'
+              ? 'Click points, double-click to finish the road'
+              : activeTool === 'erase'
+                ? 'Click a road or marker to delete it'
+                : activeTool === 'split'
+                  ? 'Click on a road to split at an intersection node'
+                  : activeTool === 'entrance'
+                    ? 'Click to place entrance on map'
+                    : activeTool === 'exit'
+                      ? 'Click to place exit on map'
+                      : activeTool === 'dropoff'
+                        ? 'Click to place drop-off loop on map'
+                        : 'Click a road or marker to inspect it'}
+          </div>
+          <div className="pointer-events-auto">
+            <ScaleBar metersPerUnit={metersPerUnit} screenPixelsPerUnit={zoom} />
+          </div>
         </div>
 
         {/* Calibration Dialog Modal (PRD 3.1.9) */}
@@ -2644,7 +2617,7 @@ export const MapSetupView: React.FC = () => {
                             {formatScale(computedScale)}
                           </span>
                         </div>
-                        <div className="text-[11px] text-[#254B98]/80 pt-1 border-t border-blue-200/50 flex flex-col gap-0.5">
+                        <div className="text-[12px] text-[#254B98]/80 pt-1 border-t border-blue-200/50 flex flex-col gap-0.5">
                           <div>Map size: {fmt(desc.worldWidthM)} m x {fmt(desc.worldHeightM)} m</div>
                           <div>A car will be {fmt(desc.carLengthUnits)} units long</div>
                           <div>A 1-lane road will be {fmt(desc.laneWidthUnits)} units wide</div>
@@ -2693,7 +2666,7 @@ export const MapSetupView: React.FC = () => {
                 <button
                   type="button"
                   onClick={dismissSpeedAdjustedNotice}
-                  className="hover:text-red-500 cursor-pointer text-[#6B7A99] p-0.5 rounded transition-colors"
+                  className="hover:text-red-500 cursor-pointer text-[#6B7A99] w-9 h-9 flex items-center justify-center rounded transition-colors"
                   aria-label="Dismiss note"
                   title="Dismiss note"
                 >
@@ -2726,40 +2699,40 @@ export const MapSetupView: React.FC = () => {
         </footer>
       </main>
 
-      {/* 4. Right properties panel (300px width, ordered sections, pinned bottom action) */}
+      {/* 4. Right properties panel (300px width, 16px padding, 20px between sections, pinned bottom action) */}
       <aside className="w-[300px] shrink-0 bg-white border-l border-[#E2E6EF] flex flex-col justify-between h-full z-20 select-none">
-        {/* Scrollable upper sections: Map, Network summary, Spawn rates, Selected road or marker, Map file */}
+        {/* Scrollable upper sections: Map, Network summary, Selected road or marker, Map file */}
         <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          {/* Section 1: Map (layout name, reference image, scale) */}
-          <div className="flex flex-col space-y-3">
+          {/* Section 1: Map */}
+          <div className="flex flex-col gap-2.5">
             <h2 className="text-[16px] font-medium text-[#111C2D]">Map</h2>
 
-            {/* Layout name field */}
-            <div className="flex flex-col space-y-1">
-              <label className="text-[12px] text-[#6B7A99]" htmlFor="layout-name">
-                Layout name
-              </label>
-              <input
-                id="layout-name"
-                type="text"
-                value={map.layoutName}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  commitMapChange({ ...map, layoutName: val });
-                  updateSettings({ layoutName: val });
-                }}
-                className="w-full h-9 px-3 bg-white border border-[#E2E6EF] rounded-lg text-[#111C2D] text-[13px] font-medium focus:outline-none focus:border-[#254B98]"
-              />
-            </div>
+            <div className="bg-[#F5F6F8] border border-[#E2E6EF] rounded-[10px] p-3 flex flex-col gap-2.5 text-[13px]">
+              {/* Layout name row */}
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[#6B7A99] shrink-0" htmlFor="layout-name">
+                  Layout name
+                </label>
+                <input
+                  id="layout-name"
+                  type="text"
+                  value={map.layoutName}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    commitMapChange({ ...map, layoutName: val });
+                    updateSettings({ layoutName: val });
+                  }}
+                  className="w-[148px] h-9 px-2.5 bg-white border border-[#E2E6EF] rounded-lg text-[#111C2D] text-[13px] font-medium text-right focus:outline-none focus:border-[#254B98]"
+                />
+              </div>
 
-            {/* Reference image with Attach / Re-attach */}
-            <div className="flex flex-col space-y-1.5">
-              <span className="text-[12px] text-[#6B7A99]">Reference image</span>
-              <div className="bg-[#F5F6F8] border border-[#E2E6EF] rounded-lg p-3 flex flex-col space-y-2">
+              {/* Reference image row */}
+              <div className="flex flex-col gap-2 pt-2.5 border-t border-[#E2E6EF]">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex flex-col min-w-0">
+                    <span className="text-[#6B7A99]">Reference image</span>
                     <span
-                      className="text-[#111C2D] font-mono text-[12px] truncate max-w-[170px]"
+                      className="text-[#111C2D] font-mono text-[12px] truncate mt-0.5"
                       title={map.referenceImageName || map.sourceFileName || 'No image attached'}
                     >
                       {map.referenceImageName || map.sourceFileName || 'None'}
@@ -2773,7 +2746,7 @@ export const MapSetupView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="h-9 px-3 rounded-lg bg-white hover:bg-gray-100 text-[#254B98] border border-[#E2E6EF] text-[12px] font-medium transition-colors cursor-pointer shrink-0"
+                    className="h-9 px-3 rounded-lg bg-white hover:bg-[#F5F6F8] text-[#254B98] border border-[#E2E6EF] text-[12px] font-medium transition-colors cursor-pointer shrink-0"
                     title="Attach or re-attach PNG or JPG reference image (200 KB – 5 MB)"
                   >
                     {map.referenceImageName ? 'Re-attach' : 'Attach'}
@@ -2781,19 +2754,19 @@ export const MapSetupView: React.FC = () => {
                 </div>
 
                 {outsideItemsCount > 0 && (
-                  <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded-lg border border-amber-200/60 leading-snug">
+                  <p className="text-[12px] text-[#111C2D] bg-[#F59E0B]/10 px-2.5 py-1.5 rounded-lg border border-[#F59E0B]/35 leading-snug">
                     {outsideItemsCount === 1 ? '1 item is' : `${outsideItemsCount} items are`} outside the image area.
                   </p>
                 )}
 
                 {!referenceImageUrl && map.referenceImageName && (
-                  <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200/60 leading-snug">
+                  <p className="text-[12px] text-[#111C2D] bg-[#F59E0B]/10 px-2.5 py-1.5 rounded-lg border border-[#F59E0B]/35 leading-snug">
                     Re-attach the image to see it
                   </p>
                 )}
 
                 {referenceImageUrl && (
-                  <div className="flex items-center justify-between text-[12px] text-[#25A76B] pt-0.5">
+                  <div className="flex items-center justify-between text-[12px] text-[#25A76B]">
                     <span className="font-medium">● Visible in session</span>
                     <button
                       type="button"
@@ -2805,588 +2778,394 @@ export const MapSetupView: React.FC = () => {
                           sourceFileName: undefined,
                         });
                       }}
-                      className="text-gray-400 hover:text-red-500 cursor-pointer"
+                      className="text-[#6B7A99] hover:text-[#EF4444] cursor-pointer min-h-[36px] px-2 flex items-center"
                       title="Remove reference image"
                     >
                       Remove
                     </button>
                   </div>
                 )}
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                {uploadError && (
+                  <div className="p-2 rounded-lg bg-[#EF4444]/10 border border-[#EF4444]/35 text-[#EF4444] text-[12px] leading-snug flex items-start gap-1.5">
+                    <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                    <span>{uploadError}</span>
+                  </div>
+                )}
+                {isUploading && (
+                  <span className="text-[12px] text-[#254B98]">Validating image...</span>
+                )}
               </div>
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/jpg"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              {uploadError && (
-                <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-[12px] leading-snug flex items-start gap-1.5">
-                  <AlertTriangle size={15} className="shrink-0 mt-0.5" />
-                  <span>{uploadError}</span>
-                </div>
-              )}
-              {isUploading && (
-                <span className="text-[12px] text-[#254B98]">Validating image...</span>
-              )}
-            </div>
-
-            {/* Map scale section */}
-            <div className="flex flex-col space-y-1.5">
-              <span className="text-[12px] text-[#6B7A99]">Map scale</span>
-              {hasReferenceImage ? (
-                <div className="bg-[#F5F6F8] border border-[#E2E6EF] rounded-lg p-3 flex flex-col space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-semibold text-[#111C2D]">
-                      Scale: {formatScale(metersPerUnit)}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={isSimulationActive}
-                      onClick={() => {
-                        if (isSimulationActive) return;
-                        setCalibrationStep('pick-a');
-                        setCalibPointA(null);
-                        setCalibPointB(null);
-                        setActiveTool('select');
-                      }}
-                      className="h-9 px-3 rounded-lg bg-[#254B98] hover:bg-[#1d3b7a] text-white text-[12px] font-medium transition-colors cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={
-                        isSimulationActive
-                          ? 'Stop the simulation to change the scale'
-                          : 'Calibrate scale by marking two points on the image'
-                      }
-                    >
-                      Calibrate
-                    </button>
-                  </div>
-                  <p className="text-[12px] text-[#6B7A99] leading-snug">
-                    Mark two points on the image and enter the real distance in meters.
-                  </p>
-                </div>
-              ) : (
-                <div className="bg-[#F5F6F8] border border-[#E2E6EF] rounded-lg p-3 flex flex-col space-y-2">
-                  <div className="flex flex-col space-y-1">
-                    <label className="text-[12px] text-[#6B7A99]">Grid scale</label>
-                    <div
-                      className="relative"
-                      title={isSimulationActive ? 'Stop the simulation to change the scale' : undefined}
-                    >
-                      <select
+              {/* Map scale row */}
+              <div className="flex flex-col gap-2 pt-2.5 border-t border-[#E2E6EF]">
+                {hasReferenceImage ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[#6B7A99]">Map scale</span>
+                        <span className="font-medium text-[#111C2D] tabular-nums mt-0.5">
+                          {formatScale(metersPerUnit)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
                         disabled={isSimulationActive}
-                        value={gridMode === 'custom' ? 'custom' : String(currentCellMeters)}
-                        onChange={(e) => handleGridScaleChange(e.target.value)}
-                        className="w-full h-9 px-3 bg-white border border-[#E2E6EF] rounded-lg text-[13px] appearance-none focus:outline-none focus:border-[#254B98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        onClick={() => {
+                          if (isSimulationActive) return;
+                          setCalibrationStep('pick-a');
+                          setCalibPointA(null);
+                          setCalibPointB(null);
+                          setActiveTool('select');
+                        }}
+                        className="h-9 px-3 rounded-lg bg-[#254B98] hover:bg-[#1c3b78] text-white text-[12px] font-medium transition-colors cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={
+                          isSimulationActive
+                            ? 'Stop the simulation to change the scale'
+                            : 'Calibrate scale by marking two points on the image'
+                        }
+                      >
+                        Calibrate
+                      </button>
+                    </div>
+                    <p className="text-[12px] text-[#6B7A99] leading-snug">
+                      Mark two points on the image and enter the real distance in meters.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#6B7A99]">Map scale</span>
+                      <span className="font-medium text-[#111C2D] tabular-nums">
+                        1 cell = {currentCellMeters} m
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[12px] text-[#6B7A99]">Grid scale</label>
+                      <div
+                        className="relative"
                         title={isSimulationActive ? 'Stop the simulation to change the scale' : undefined}
                       >
-                        <option value="5">1 cell = 5 m</option>
-                        <option value="10">1 cell = 10 m (default)</option>
-                        <option value="20">1 cell = 20 m</option>
-                        <option value="50">1 cell = 50 m</option>
-                        <option value="custom">Custom value...</option>
-                      </select>
-                      <span className="text-[12px] text-[#6B7A99] absolute right-3 top-2.5 pointer-events-none">
-                        ▼
+                        <select
+                          disabled={isSimulationActive}
+                          value={gridMode === 'custom' ? 'custom' : String(currentCellMeters)}
+                          onChange={(e) => handleGridScaleChange(e.target.value)}
+                          className="w-full h-9 px-3 bg-white border border-[#E2E6EF] rounded-lg text-[13px] text-[#111C2D] appearance-none focus:outline-none focus:border-[#254B98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-[#F5F6F8]"
+                          title={isSimulationActive ? 'Stop the simulation to change the scale' : undefined}
+                        >
+                          <option value="5">1 cell = 5 m</option>
+                          <option value="10">1 cell = 10 m (default)</option>
+                          <option value="20">1 cell = 20 m</option>
+                          <option value="50">1 cell = 50 m</option>
+                          <option value="custom">Custom value...</option>
+                        </select>
+                        <span className="text-[12px] text-[#6B7A99] absolute right-3 top-2.5 pointer-events-none">
+                          ▼
+                        </span>
+                      </div>
+                    </div>
+
+                    {gridMode === 'custom' && (
+                      <div className="flex flex-col">
+                        <div
+                          className="flex items-center gap-2"
+                          title={isSimulationActive ? 'Stop the simulation to change the scale' : undefined}
+                        >
+                          <input
+                            type="number"
+                            min="0.5"
+                            max="200"
+                            step="any"
+                            disabled={isSimulationActive}
+                            value={customCellInput}
+                            onChange={(e) => {
+                              setCustomCellInput(e.target.value);
+                              setCustomCellError(null);
+                            }}
+                            onBlur={applyCustomCellInput}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                applyCustomCellInput();
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            className={`w-full h-9 px-3 bg-white border ${
+                              customCellError ? 'border-[#EF4444]' : 'border-[#E2E6EF]'
+                            } rounded-lg text-[13px] text-[#111C2D] focus:outline-none focus:border-[#254B98] disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-[#F5F6F8]`}
+                            placeholder="Meters per cell"
+                            title={isSimulationActive ? 'Stop the simulation to change the scale' : undefined}
+                          />
+                          <span className="text-[12px] text-[#6B7A99] shrink-0">m/cell</span>
+                        </div>
+                        {customCellError && (
+                          <span className="text-[12px] text-[#EF4444] mt-1">{customCellError}</span>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between text-[12px] text-[#6B7A99]">
+                      <span>Scale ratio</span>
+                      <span className="font-mono text-[#111C2D]">({formatScale(metersPerUnit)})</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <p className="text-[13px] text-[#6B7A99] leading-snug">
+              Traffic numbers (arrival rates, vehicle mix, destinations) are set in the Settings step.
+            </p>
+          </div>
+
+          {/* Section 2: Network summary */}
+          <div className="flex flex-col gap-2.5 pt-4 border-t border-[#E2E6EF]">
+            <h2 className="text-[16px] font-medium text-[#111C2D]">Network summary</h2>
+            <div className="bg-[#F5F6F8] border border-[#E2E6EF] rounded-[10px] p-3 flex flex-col gap-2.5 text-[13px]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[#6B7A99]">Road segments</span>
+                <span className="font-medium text-[#111C2D] tabular-nums">
+                  {map.roadSegments.length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[#6B7A99]">Intersections</span>
+                <span className="font-medium text-[#111C2D] tabular-nums">
+                  {intersectionCount}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[#6B7A99]">Entrances / Exits / Drop-offs</span>
+                <span className="font-medium text-[#111C2D] tabular-nums">
+                  {entrances.length} / {exits.length} / {dropoffs.length}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 text-[13px] leading-snug">
+              {routeValidation.isValid ? (
+                <>
+                  <CheckCircle2 size={16} className="text-[#25A76B] shrink-0 mt-0.5" />
+                  <span className="text-[#111C2D]">Every gate has a route to an exit</span>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle size={16} className="text-[#EF4444] shrink-0 mt-0.5" />
+                  <span className="text-[#EF4444]">
+                    {routeValidation.errorMessage ||
+                      routeValidation.entranceSummaries?.find((s) => s.error)?.error ||
+                      'One or more gates cannot reach an exit.'}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Section 3: Selected road or marker (shown only when something is selected) */}
+          {(selectedRoad || selectedMarker) && (
+            <div className="flex flex-col gap-2.5 pt-4 border-t border-[#E2E6EF]">
+              <h2 className="text-[16px] font-medium text-[#111C2D]">
+                Selected road or marker
+              </h2>
+
+              {/* Selected Road Inspector */}
+              {selectedRoad && (
+                <div className="bg-[#F5F6F8] border border-[#E2E6EF] rounded-[10px] p-3 flex flex-col gap-2.5 text-[13px]">
+                  <span className="text-[13px] font-medium text-[#254B98] truncate">
+                    {selectedRoad.name}
+                  </span>
+
+                  {/* Length & Queue capacity */}
+                  <div className="grid grid-cols-2 gap-2 bg-white rounded-lg p-2.5 border border-[#E2E6EF] text-[13px]">
+                    <div className="flex flex-col">
+                      <span className="text-[12px] text-[#6B7A99]">Length</span>
+                      <span className="font-medium text-[#111C2D] tabular-nums">
+                        {selectedRoadLengthMeters} m
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[12px] text-[#6B7A99]">Queue capacity</span>
+                      <span
+                        className="font-medium text-[#111C2D] tabular-nums"
+                        title={`${selectedRoadLengthMeters}m / (${settings.vehicleLengthMeters ?? 4.5}m + ${settings.standstillGapMeters ?? 2.0}m) × ${selectedRoad.lanes || 1} lane(s)`}
+                      >
+                        {selectedRoadQueueCapacity} veh
                       </span>
                     </div>
                   </div>
 
-                  {gridMode === 'custom' && (
-                    <div className="flex flex-col mt-1">
-                      <div
-                        className="flex items-center gap-2"
-                        title={isSimulationActive ? 'Stop the simulation to change the scale' : undefined}
-                      >
-                        <input
-                          type="number"
-                          min="0.5"
-                          max="200"
-                          step="any"
-                          disabled={isSimulationActive}
-                          value={customCellInput}
-                          onChange={(e) => {
-                            setCustomCellInput(e.target.value);
-                            setCustomCellError(null);
-                          }}
-                          onBlur={applyCustomCellInput}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              applyCustomCellInput();
-                              e.currentTarget.blur();
-                            }
-                          }}
-                          className={`w-full h-9 px-3 bg-white border ${
-                            customCellError ? 'border-red-500' : 'border-[#E2E6EF]'
-                          } rounded-lg text-[13px] focus:outline-none focus:border-[#254B98] disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50`}
-                          placeholder="Meters per cell"
-                          title={isSimulationActive ? 'Stop the simulation to change the scale' : undefined}
-                        />
-                        <span className="text-[12px] text-[#6B7A99] shrink-0">m/cell</span>
-                      </div>
-                      {customCellError && (
-                        <span className="text-[11px] text-red-600 mt-1">{customCellError}</span>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between text-[12px] text-[#6B7A99] pt-1">
-                    <span className="font-medium text-[#111C2D]">1 grid cell = {currentCellMeters} m</span>
-                    <span className="font-mono">({formatScale(metersPerUnit)})</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Default speed limit dropdown */}
-            <div className="flex flex-col space-y-1">
-              <label className="text-[12px] text-[#6B7A99]" htmlFor="speed-limit">
-                Default speed limit
-              </label>
-              <div className="relative">
-                <select
-                  id="speed-limit"
-                  value={settings.defaultSpeedLimit}
-                  onChange={(e) =>
-                    updateSettings({ defaultSpeedLimit: clampSpeedKmH(parseInt(e.target.value, 10)) })
-                  }
-                  className="w-full h-9 px-3 bg-white border border-[#E2E6EF] rounded-lg text-[#111C2D] text-[13px] appearance-none focus:outline-none focus:border-[#254B98] cursor-pointer"
-                >
-                  {SPEED_LIMIT_OPTIONS_KMH.map((speed) => (
-                    <option key={speed} value={speed}>
-                      {speed} km/h{speed === DEFAULT_SPEED_KMH ? ' (default)' : ''}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-[12px] text-[#6B7A99] absolute right-3 top-2.5 pointer-events-none">
-                  ▼
-                </span>
-              </div>
-            </div>
-
-            {/* Vehicle mix control (settings.stickerShare) */}
-            <div className="pt-1 pb-1">
-              <VehicleMixControl disabled={isSimulationActive} />
-            </div>
-
-            {/* Destination split control (per entrance drop-off & direct split) */}
-            <div className="pt-1 pb-1">
-              <DestinationSplitControl disabled={isSimulationActive} />
-            </div>
-
-            {/* Drop-off behavior (patience, dwell time) */}
-            <DropoffBehaviorControl disabled={isSimulationActive} />
-
-            {/* Vehicle geometry & gap */}
-            <div className="flex flex-col space-y-1.5">
-              <span className="text-[12px] text-[#6B7A99]">Vehicle geometry & gap</span>
-              <div className="grid grid-cols-2 gap-2 bg-[#F5F6F8] border border-[#E2E6EF] rounded-lg p-3">
-                <div className="flex flex-col space-y-1">
-                  <label className="text-[12px] text-[#6B7A99]">Length</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="1"
-                      max="20"
-                      value={settings.vehicleLengthMeters ?? 4.5}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value) || 4.5;
-                        updateSettings({ vehicleLengthMeters: val });
-                      }}
-                      className="w-full h-9 px-2 bg-white border border-[#E2E6EF] rounded-lg text-[13px] focus:outline-none focus:border-[#254B98]"
-                    />
-                    <span className="text-[12px] text-[#6B7A99]">m</span>
-                  </div>
-                </div>
-                <div className="flex flex-col space-y-1">
-                  <label className="text-[12px] text-[#6B7A99]">Standstill gap</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0.5"
-                      max="10"
-                      value={settings.standstillGapMeters ?? 2.0}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value) || 2.0;
-                        updateSettings({ standstillGapMeters: val });
-                      }}
-                      className="w-full h-9 px-2 bg-white border border-[#E2E6EF] rounded-lg text-[13px] focus:outline-none focus:border-[#254B98]"
-                    />
-                    <span className="text-[12px] text-[#6B7A99]">m</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Alert thresholds */}
-            <div className="flex flex-col space-y-1.5">
-              <span className="text-[12px] text-[#6B7A99]">Alert thresholds</span>
-              <div className="bg-[#F5F6F8] border border-[#E2E6EF] rounded-lg p-3 flex flex-col space-y-2 text-[12px]">
-                <div className="flex items-center justify-between">
-                  <label className="text-[#6B7A99]" htmlFor="alert-wait-input">Wait threshold</label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      id="alert-wait-input"
-                      type="number"
-                      min="10"
-                      max="600"
-                      step="5"
-                      value={settings.alertWaitThresholdSec ?? 120}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10) || 120;
-                        updateSettings({ alertWaitThresholdSec: val });
-                      }}
-                      className="w-16 h-9 px-2 bg-white border border-[#E2E6EF] rounded-lg text-right font-medium text-[#111C2D] focus:outline-none focus:border-[#254B98]"
-                    />
-                    <span className="text-[#6B7A99]">s</span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-[#6B7A99]" htmlFor="alert-util-input">Saturation threshold</label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      id="alert-util-input"
-                      type="number"
-                      min="50"
-                      max="100"
-                      step="5"
-                      value={settings.alertUtilThresholdPct ?? 80}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10) || 80;
-                        updateSettings({ alertUtilThresholdPct: val });
-                      }}
-                      className="w-16 h-9 px-2 bg-white border border-[#E2E6EF] rounded-lg text-right font-medium text-[#111C2D] focus:outline-none focus:border-[#254B98]"
-                    />
-                    <span className="text-[#6B7A99]">%</span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-[#6B7A99]" htmlFor="alert-duration-input">Duration threshold</label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      id="alert-duration-input"
-                      type="number"
-                      min="5"
-                      max="180"
-                      step="5"
-                      value={settings.alertUtilDurationSec ?? 30}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10) || 30;
-                        updateSettings({ alertUtilDurationSec: val });
-                      }}
-                      className="w-16 h-9 px-2 bg-white border border-[#E2E6EF] rounded-lg text-right font-medium text-[#111C2D] focus:outline-none focus:border-[#254B98]"
-                    />
-                    <span className="text-[#6B7A99]">s</span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-[#6B7A99]" htmlFor="alert-return-input">Recovery threshold</label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      id="alert-return-input"
-                      type="number"
-                      min="20"
-                      max="80"
-                      step="5"
-                      value={settings.alertReturnUtilPct ?? 60}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10) || 60;
-                        updateSettings({ alertReturnUtilPct: val });
-                      }}
-                      className="w-16 h-9 px-2 bg-white border border-[#E2E6EF] rounded-lg text-right font-medium text-[#111C2D] focus:outline-none focus:border-[#254B98]"
-                    />
-                    <span className="text-[#6B7A99]">%</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 2: Network summary */}
-          <div className="flex flex-col space-y-3 pt-2 border-t border-[#E2E6EF]">
-            <h2 className="text-[16px] font-medium text-[#111C2D]">Network summary</h2>
-            <div className="p-3 rounded-lg bg-[#F5F6F8] border border-[#E2E6EF] flex flex-col space-y-3">
-              <div className="grid grid-cols-2 gap-2 text-[13px] text-[#111C2D]">
-                <div>
-                  <span className="text-[12px] text-[#6B7A99] block">Road segments</span>
-                  <span className="font-medium text-[#111C2D]">{map.roadSegments.length}</span>
-                </div>
-                <div>
-                  <span className="text-[12px] text-[#6B7A99] block">Intersections</span>
-                  <span className="font-medium text-[#111C2D]">{intersectionCount}</span>
-                </div>
-              </div>
-              <div className="border-t border-[#E2E6EF] pt-2.5">
-                <span className="text-[12px] text-[#6B7A99] font-medium block mb-2">Zone breakdown</span>
-                <div className="flex flex-col space-y-2 text-[13px]">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-[#111C2D]">
-                      <LogIn size={15} className="text-[#254B98] shrink-0" />
-                      <span>Entrances:</span>
-                    </div>
-                    <span className="font-medium text-[#111C2D]">{entrances.length}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-[#111C2D]">
-                      <LogOut size={15} className="text-[#25A76B] shrink-0" />
-                      <span>Exits:</span>
-                    </div>
-                    <span className="font-medium text-[#111C2D]">{exits.length}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-[#111C2D]">
-                      <CarPersonIcon size={16} className="text-[#F59E0B] shrink-0" />
-                      <span>Drop-offs:</span>
-                    </div>
-                    <span className="font-medium text-[#111C2D]">{dropoffs.length}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 3: Spawn rates */}
-          <div className="flex flex-col space-y-3 pt-2 border-t border-[#E2E6EF]">
-            <h2 className="text-[16px] font-medium text-[#111C2D]">Spawn rates</h2>
-            <div className="flex flex-col space-y-3">
-              {entrances.map((ent) => (
-                <div
-                  key={ent.id}
-                  className="flex items-center justify-between gap-2 text-[#111C2D] text-[13px]"
-                >
-                  <span className="truncate max-w-[130px] font-medium" title={ent.name}>{ent.name}:</span>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      min="0"
-                      max="120"
-                      value={settings.spawnRates[ent.id] ?? 18}
-                      onChange={(e) => {
-                        const parsed = parseInt(e.target.value, 10);
-                        const val = isNaN(parsed) ? 0 : Math.max(0, parsed);
-                        updateSettings({
-                          spawnRates: {
-                            ...settings.spawnRates,
-                            [ent.id]: val,
-                          },
-                        });
-                      }}
-                      className="w-16 h-9 px-2 text-center bg-white border border-[#E2E6EF] rounded-lg text-[13px] font-medium text-[#111C2D] focus:outline-none focus:border-[#254B98] focus-visible:ring-1 focus-visible:ring-[#254B98]"
-                      aria-label={`Spawn rate for ${ent.name}`}
-                    />
-                    <span className="text-[12px] text-[#6B7A99]">veh/min</span>
-                  </div>
-                </div>
-              ))}
-              {entrances.length === 0 && (
-                <span className="text-[12px] text-[#6B7A99] italic">
-                  No entrances placed yet
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Section 4: Selected road or marker */}
-          <div className="flex flex-col space-y-3 pt-2 border-t border-[#E2E6EF]">
-            <h2 className="text-[16px] font-medium text-[#111C2D]">
-              Selected road or marker
-            </h2>
-
-            {/* Selected Road Inspector */}
-            {selectedRoad && (
-              <div className="p-3 rounded-lg bg-blue-50/60 border border-blue-100 flex flex-col space-y-3">
-                <span className="text-[13px] font-medium text-[#254B98] truncate">
-                  {selectedRoad.name}
-                </span>
-
-                {/* Length & Queue capacity */}
-                <div className="grid grid-cols-2 gap-2 bg-white rounded-lg p-2.5 border border-blue-100 text-[13px]">
-                  <div className="flex flex-col">
-                    <span className="text-[12px] text-[#6B7A99]">Length</span>
-                    <span className="font-medium text-[#111C2D] tabular-nums">
-                      {selectedRoadLengthMeters} m
-                    </span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[12px] text-[#6B7A99]">Queue capacity</span>
-                    <span
-                      className="font-medium text-[#111C2D] tabular-nums"
-                      title={`${selectedRoadLengthMeters}m / (${settings.vehicleLengthMeters ?? 4.5}m + ${settings.standstillGapMeters ?? 2.0}m) × ${selectedRoad.lanes || 1} lane(s)`}
-                    >
-                      {selectedRoadQueueCapacity} veh
-                    </span>
-                  </div>
-                </div>
-
-                {/* Flow direction toggle (One-way / Two-way) - 36px tall */}
-                <div className="flex flex-col space-y-1.5">
-                  <span className="text-[12px] text-[#6B7A99]">Flow direction</span>
-                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-200/70 rounded-lg text-center">
-                    <button
-                      type="button"
-                      onClick={() => updateSelectedRoad({ flowDirection: 'one-way' })}
-                      className={`h-9 rounded-lg text-[13px] transition-colors cursor-pointer ${
-                        selectedRoad.flowDirection === 'one-way'
-                          ? 'bg-white text-[#254B98] font-medium'
-                          : 'text-gray-600 hover:text-gray-900'
-                      }`}
-                    >
-                      One-way
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateSelectedRoad({ flowDirection: 'two-way' })}
-                      className={`h-9 rounded-lg text-[13px] transition-colors cursor-pointer ${
-                        selectedRoad.flowDirection === 'two-way'
-                          ? 'bg-white text-[#254B98] font-medium'
-                          : 'text-gray-600 hover:text-gray-900'
-                      }`}
-                    >
-                      Two-way
-                    </button>
-                  </div>
-
-                  {/* Requirement 7: Reverse direction button for one-way roads */}
-                  {selectedRoad.flowDirection === 'one-way' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const reversedPoints = [...selectedRoad.points].reverse();
-                        updateSelectedRoad({ points: reversedPoints });
-                      }}
-                      className="h-9 w-full rounded-lg bg-white border border-[#E2E6EF] hover:bg-[#F5F6F8] text-[#111C2D] text-[13px] font-medium flex items-center justify-center gap-2 cursor-pointer transition-colors mt-1.5"
-                      title="Reverse the one-way travel direction"
-                    >
-                      <RotateCcw size={14} className="text-[#254B98]" />
-                      <span>Reverse direction</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* Access type selector */}
-                <div className="flex flex-col space-y-1.5">
-                  <span className="text-[12px] text-[#6B7A99]">Access type</span>
-                  <div className="flex flex-col space-y-2">
-                    <label className="flex items-center gap-2 text-[13px] text-[#111C2D] cursor-pointer">
-                      <input
-                        type="radio"
-                        name="access_type"
-                        checked={selectedRoad.accessType === 'shared'}
-                        onChange={() => updateSelectedRoad({ accessType: 'shared' })}
-                        className="text-[#254B98] focus:ring-0 w-4 h-4"
-                      />
-                      <span>Shared</span>
-                    </label>
-                    <label className="flex items-center gap-2 text-[13px] text-[#111C2D] cursor-pointer">
-                      <input
-                        type="radio"
-                        name="access_type"
-                        checked={selectedRoad.accessType === 'sticker-only'}
-                        onChange={() => updateSelectedRoad({ accessType: 'sticker-only' })}
-                        className="text-[#254B98] focus:ring-0 w-4 h-4"
-                      />
-                      <span>Sticker-only</span>
-                    </label>
-                    <label className="flex items-center gap-2 text-[13px] text-[#111C2D] cursor-pointer">
-                      <input
-                        type="radio"
-                        name="access_type"
-                        checked={selectedRoad.accessType === 'non-sticker-only'}
-                        onChange={() => updateSelectedRoad({ accessType: 'non-sticker-only' })}
-                        className="text-[#254B98] focus:ring-0 w-4 h-4"
-                      />
-                      <span>Non-sticker-only</span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Lanes field (1-3, default 1) - 36px tall buttons */}
-                <div className="flex items-center justify-between gap-2 pt-2 border-t border-blue-100">
-                  <span className="text-[12px] text-[#6B7A99]">Lanes</span>
-                  <div className="flex items-center gap-1.5">
-                    {[1, 2, 3].map((num) => (
+                  {/* Flow direction toggle (One-way / Two-way) - 36px tall */}
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[12px] text-[#6B7A99]">Flow direction</span>
+                    <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#E2E6EF]/70 rounded-lg text-center">
                       <button
-                        key={num}
                         type="button"
-                        onClick={() => updateSelectedRoad({ lanes: num })}
-                        className={`w-9 h-9 rounded-lg text-[13px] font-medium transition-colors cursor-pointer ${
-                          (selectedRoad.lanes || 1) === num
-                            ? 'bg-[#254B98] text-white'
-                            : 'bg-white text-[#111C2D] border border-gray-200 hover:bg-gray-100'
+                        onClick={() => updateSelectedRoad({ flowDirection: 'one-way' })}
+                        className={`h-9 rounded-lg text-[13px] transition-colors cursor-pointer ${
+                          selectedRoad.flowDirection === 'one-way'
+                            ? 'bg-white text-[#254B98] font-medium'
+                            : 'text-[#6B7A99] hover:text-[#111C2D]'
                         }`}
                       >
-                        {num}
+                        One-way
                       </button>
-                    ))}
+                      <button
+                        type="button"
+                        onClick={() => updateSelectedRoad({ flowDirection: 'two-way' })}
+                        className={`h-9 rounded-lg text-[13px] transition-colors cursor-pointer ${
+                          selectedRoad.flowDirection === 'two-way'
+                            ? 'bg-white text-[#254B98] font-medium'
+                            : 'text-[#6B7A99] hover:text-[#111C2D]'
+                        }`}
+                      >
+                        Two-way
+                      </button>
+                    </div>
+
+                    {/* Reverse direction button for one-way roads */}
+                    {selectedRoad.flowDirection === 'one-way' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const reversedPoints = [...selectedRoad.points].reverse();
+                          updateSelectedRoad({ points: reversedPoints });
+                        }}
+                        className="h-9 w-full rounded-lg bg-white border border-[#E2E6EF] hover:bg-[#F5F6F8] text-[#111C2D] text-[13px] font-medium flex items-center justify-center gap-2 cursor-pointer transition-colors mt-1"
+                        title="Reverse the one-way travel direction"
+                      >
+                        <RotateCcw size={14} className="text-[#254B98]" />
+                        <span>Reverse direction</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Access type selector */}
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[12px] text-[#6B7A99]">Access type</span>
+                    <div className="flex flex-col">
+                      <label className="flex items-center gap-2 text-[13px] text-[#111C2D] cursor-pointer min-h-[36px]">
+                        <input
+                          type="radio"
+                          name="access_type"
+                          checked={selectedRoad.accessType === 'shared'}
+                          onChange={() => updateSelectedRoad({ accessType: 'shared' })}
+                          className="accent-[#254B98] focus:ring-0 w-4 h-4"
+                        />
+                        <span>Shared</span>
+                      </label>
+                      <label className="flex items-center gap-2 text-[13px] text-[#111C2D] cursor-pointer min-h-[36px]">
+                        <input
+                          type="radio"
+                          name="access_type"
+                          checked={selectedRoad.accessType === 'sticker-only'}
+                          onChange={() => updateSelectedRoad({ accessType: 'sticker-only' })}
+                          className="accent-[#254B98] focus:ring-0 w-4 h-4"
+                        />
+                        <span>Sticker-only</span>
+                      </label>
+                      <label className="flex items-center gap-2 text-[13px] text-[#111C2D] cursor-pointer min-h-[36px]">
+                        <input
+                          type="radio"
+                          name="access_type"
+                          checked={selectedRoad.accessType === 'non-sticker-only'}
+                          onChange={() => updateSelectedRoad({ accessType: 'non-sticker-only' })}
+                          className="accent-[#254B98] focus:ring-0 w-4 h-4"
+                        />
+                        <span>Non-sticker-only</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Lanes field (1-3, default 1) - 36px tall buttons */}
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#E2E6EF]">
+                    <span className="text-[12px] text-[#6B7A99]">Lanes</span>
+                    <div className="flex items-center gap-1.5">
+                      {[1, 2, 3].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => updateSelectedRoad({ lanes: num })}
+                          className={`w-9 h-9 rounded-lg text-[13px] font-medium transition-colors cursor-pointer ${
+                            (selectedRoad.lanes || 1) === num
+                              ? 'bg-[#254B98] text-white'
+                              : 'bg-white text-[#111C2D] border border-[#E2E6EF] hover:bg-[#F5F6F8]'
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Selected Zone Marker Inspector */}
-            {selectedMarker && !selectedRoad && (
-              <div className="p-3 rounded-lg bg-[#F5F6F8] border border-[#E2E6EF] flex flex-col space-y-3">
-                <div className="flex items-center gap-2">
-                  {selectedMarker.type === 'entrance' ? (
-                    <LogIn size={16} className="text-[#254B98] shrink-0" />
-                  ) : selectedMarker.type === 'exit' ? (
-                    <LogOut size={16} className="text-[#25A76B] shrink-0" />
-                  ) : (
-                    <CarPersonIcon size={16} className="text-[#F59E0B] shrink-0" />
+              {/* Selected Zone Marker Inspector */}
+              {selectedMarker && !selectedRoad && (
+                <div className="bg-[#F5F6F8] border border-[#E2E6EF] rounded-[10px] p-3 flex flex-col gap-2.5 text-[13px]">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                        selectedMarker.type === 'entrance'
+                          ? 'bg-[#254B98]'
+                          : selectedMarker.type === 'exit'
+                            ? 'bg-[#25A76B]'
+                            : 'bg-[#F59E0B]'
+                      }`}
+                    />
+                    <span className="text-[13px] font-medium text-[#111C2D] truncate">
+                      {selectedMarker.name}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[12px] text-[#6B7A99]">Marker name</label>
+                    <input
+                      type="text"
+                      value={selectedMarker.name}
+                      onChange={(e) => updateSelectedMarker({ name: e.target.value })}
+                      className="w-full h-9 px-3 bg-white border border-[#E2E6EF] rounded-lg text-[13px] text-[#111C2D] focus:outline-none focus:border-[#254B98]"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[12px] text-[#6B7A99]">Type</span>
+                    <span className="text-[13px] font-medium capitalize text-[#111C2D]">
+                      {selectedMarker.type}
+                    </span>
+                  </div>
+                  {isSelectedMarkerFarFromRoads && (
+                    <div className="text-[12px] text-[#111C2D] bg-[#F59E0B]/10 px-2.5 py-1.5 rounded-lg border border-[#F59E0B]/35 leading-snug flex items-start gap-1.5">
+                      <AlertTriangle size={14} className="text-[#F59E0B] shrink-0 mt-0.5" />
+                      <span>No road within 6 m. Vehicles attach to the nearest road point.</span>
+                    </div>
                   )}
-                  <span className="text-[13px] font-medium text-[#111C2D] truncate">
-                    {selectedMarker.name}
-                  </span>
                 </div>
-                <div className="flex flex-col space-y-1">
-                  <label className="text-[12px] text-[#6B7A99]">Marker name</label>
-                  <input
-                    type="text"
-                    value={selectedMarker.name}
-                    onChange={(e) => updateSelectedMarker({ name: e.target.value })}
-                    className="w-full h-9 px-3 bg-white border border-[#E2E6EF] rounded-lg text-[13px] focus:outline-none focus:border-[#254B98]"
-                  />
-                </div>
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="text-[12px] text-[#6B7A99]">Type:</span>
-                  <span className="text-[13px] font-medium capitalize text-[#111C2D]">{selectedMarker.type}</span>
-                </div>
-                {isSelectedMarkerFarFromRoads && (
-                  <div className="text-[12px] text-amber-700 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200/60 leading-snug flex items-start gap-1.5">
-                    <AlertTriangle size={14} className="text-[#F59E0B] shrink-0 mt-0.5" />
-                    <span>No road within 6 m. Vehicles attach to the nearest road point.</span>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
+          )}
 
-            {/* Placeholder when no selection */}
-            {!selectedRoad && !selectedMarker && (
-              <div className="p-3.5 rounded-lg bg-[#F5F6F8] border border-[#E2E6EF] text-center text-[#6B7A99] text-[12px]">
-                Click a road or marker to inspect properties
-              </div>
-            )}
-          </div>
-
-          {/* Section 5: Map file */}
-          <div className="flex flex-col space-y-3 pt-2 border-t border-[#E2E6EF]">
+          {/* Section 4: Map file */}
+          <div className="flex flex-col gap-2.5 pt-4 border-t border-[#E2E6EF]">
             <h2 className="text-[16px] font-medium text-[#111C2D]">Map file</h2>
 
-            {/* Import / Export JSON buttons (36px tall) */}
+            {/* Import / Export JSON buttons (two equal 36px white buttons side by side) */}
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => importInputRef.current?.click()}
-                className="h-9 px-3 rounded-lg bg-white text-[#254B98] border border-[#E2E6EF] hover:bg-gray-50 text-[12px] font-medium transition-colors cursor-pointer text-center flex items-center justify-center"
+                className="h-9 px-3 rounded-lg bg-white text-[#111C2D] border border-[#E2E6EF] hover:bg-[#F5F6F8] text-[13px] font-medium transition-colors cursor-pointer text-center flex items-center justify-center"
               >
                 Import (JSON)
               </button>
               <button
                 type="button"
                 onClick={handleExportJson}
-                className="h-9 px-3 rounded-lg bg-white text-[#254B98] border border-[#E2E6EF] hover:bg-gray-50 text-[12px] font-medium transition-colors cursor-pointer text-center flex items-center justify-center"
+                className="h-9 px-3 rounded-lg bg-white text-[#111C2D] border border-[#E2E6EF] hover:bg-[#F5F6F8] text-[13px] font-medium transition-colors cursor-pointer text-center flex items-center justify-center"
               >
                 Export (JSON)
               </button>
@@ -3399,35 +3178,26 @@ export const MapSetupView: React.FC = () => {
               />
             </div>
 
-            {/* Load Sample Map Button (36px tall) */}
+            {/* Load sample map (full-width 36px white button) */}
             <button
               type="button"
               onClick={loadSampleMap}
-              className="w-full h-9 px-3 rounded-lg bg-blue-50 text-[#254B98] hover:bg-blue-100 border border-blue-200 text-[12px] font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              className="w-full h-9 px-3 rounded-lg bg-white text-[#111C2D] border border-[#E2E6EF] hover:bg-[#F5F6F8] text-[13px] font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
               title="Creates a valid network: 2 entrances, 2 exits, 1 drop-off, 14 road segments"
             >
-              <Sparkles size={15} />
+              <Sparkles size={15} className="text-[#254B98]" />
               <span>Load sample map</span>
             </button>
 
-            {/* New layout button */}
+            {/* New layout (text-style button, no border, muted #6B7A99, left aligned) */}
             <button
               type="button"
               onClick={() => setShowNewLayoutConfirm(true)}
-              className="w-full h-9 px-3 rounded-lg bg-blue-50 text-[#254B98] hover:bg-blue-100 border border-blue-200 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              className="self-start min-h-[36px] px-1 text-[13px] font-medium text-[#6B7A99] hover:text-[#111C2D] flex items-center gap-1.5 transition-colors cursor-pointer bg-transparent border-0"
               title="Start a blank layout while preserving run history"
             >
               <Plus size={15} />
               <span>New layout</span>
-            </button>
-
-            {/* Reset all data button (36px tall) */}
-            <button
-              type="button"
-              onClick={() => setShowResetConfirm(true)}
-              className="w-full h-9 px-3 rounded-lg text-center text-gray-500 hover:text-red-600 hover:border-red-200 border border-[#E2E6EF] transition-colors text-[12px] font-medium cursor-pointer"
-            >
-              Reset all data
             </button>
 
             <p className="text-[12px] text-[#6B7A99] leading-snug">
@@ -3436,14 +3206,14 @@ export const MapSetupView: React.FC = () => {
           </div>
         </div>
 
-        {/* Pinned bottom: Save and go to simulation */}
+        {/* Pinned bottom: ONE 44px primary button "Next: Settings →" */}
         <div className="p-4 border-t border-[#E2E6EF] shrink-0 bg-white">
           <button
             type="button"
-            onClick={() => setActiveTab('simulation')}
-            className="w-full h-10 px-4 bg-[#25A76B] hover:bg-[#1f8c59] text-white rounded-lg text-[14px] font-medium flex items-center justify-center gap-2 transition-all cursor-pointer"
+            onClick={() => setActiveTab('settings')}
+            className="w-full h-11 px-4 bg-[#254B98] hover:bg-[#1c3b78] text-white rounded-[8px] text-[14px] font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
           >
-            <span>Save and go to simulation</span>
+            <span>Next: Settings</span>
             <ArrowRight size={16} />
           </button>
         </div>
@@ -3452,7 +3222,7 @@ export const MapSetupView: React.FC = () => {
       {/* New Layout Confirmation Modal */}
       {showNewLayoutConfirm && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg max-w-sm w-full p-5 shadow-xl border border-[#E2E6EF] flex flex-col gap-3">
+          <div className="bg-white rounded-[12px] max-w-sm w-full p-5 shadow-xl border border-[#E2E6EF] flex flex-col gap-3">
             <div className="flex items-center gap-2 text-[#254B98] font-medium text-[15px]">
               <Plus size={18} />
               <span>Start blank layout</span>
@@ -3464,14 +3234,14 @@ export const MapSetupView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowNewLayoutConfirm(false)}
-                className="h-9 px-4 rounded-lg border border-[#E2E6EF] text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
+                className="h-9 px-4 rounded-lg border border-[#E2E6EF] text-[13px] font-medium text-[#111C2D] hover:bg-[#F5F6F8] cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleNewLayoutConfirm}
-                className="h-9 px-4 rounded-lg bg-[#254B98] hover:bg-[#1d3b7a] text-white text-[13px] font-medium cursor-pointer"
+                className="h-9 px-4 rounded-lg bg-[#254B98] hover:bg-[#1c3b78] text-white text-[13px] font-medium cursor-pointer"
               >
                 Confirm
               </button>
@@ -3480,40 +3250,6 @@ export const MapSetupView: React.FC = () => {
         </div>
       )}
 
-      {/* Reset Confirmation Modal */}
-      {showResetConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg max-w-sm w-full p-5 shadow-xl border border-[#E2E6EF] flex flex-col gap-3">
-            <div className="flex items-center gap-2 text-red-600 font-medium text-[15px]">
-              <AlertTriangle size={18} />
-              <span>Confirm data reset</span>
-            </div>
-            <p className="text-[12px] text-[#6B7A99] leading-relaxed">
-              This erases the map, all settings and the whole run history. Use New layout if you only want a fresh map.
-            </p>
-            <div className="flex items-center justify-end gap-2 mt-2">
-              <button
-                type="button"
-                onClick={() => setShowResetConfirm(false)}
-                className="h-9 px-4 rounded-lg border border-[#E2E6EF] text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  stopSimulation();
-                  resetAll();
-                  setShowResetConfirm(false);
-                }}
-                className="h-9 px-4 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[13px] font-medium cursor-pointer"
-              >
-                Reset all
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

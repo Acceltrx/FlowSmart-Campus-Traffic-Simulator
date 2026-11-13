@@ -1,13 +1,7 @@
 import {
   Point,
-  MapConfig,
-  SimulationSettings,
   SimulationResult,
-  RoadSegment,
-  ZoneMarker,
-  BottleneckRank,
   AccessType,
-  FlowDirection,
 } from '../types/traffic';
 
 export type VehicleState = 'moving' | 'queued' | 'waiting' | 'exited';

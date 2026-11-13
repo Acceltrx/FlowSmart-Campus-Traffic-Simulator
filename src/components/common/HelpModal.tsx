@@ -16,22 +16,24 @@ interface HelpModalProps {
   tab: ActiveTab;
 }
 
+const APP_VERSION = '1.0.0';
+
 const SettingCardView: React.FC<{ setting: HelpSetting }> = ({ setting }) => {
   return (
-    <div className="border border-[#E2E6EF] rounded-lg p-3 bg-[#FAFBFD] flex flex-col gap-2">
+    <div className="border border-[#E2E6EF] rounded-[12px] p-3 bg-[#F5F6F8] flex flex-col gap-2">
       <div className="text-[14px] font-bold text-[#111C2D] leading-snug">
         {setting.name}
       </div>
 
       <div>
-        <div className="text-[12px] font-bold text-[#6B7280] mb-0.5">What it does</div>
-        <div className="text-[13px] text-[#434651] leading-relaxed">{setting.what}</div>
+        <div className="text-[12px] font-bold text-[#6B7A99] mb-0.5">What it does</div>
+        <div className="text-[13px] text-[#111C2D] leading-relaxed">{setting.what}</div>
       </div>
 
       {setting.why && (
         <div>
-          <div className="text-[12px] font-bold text-[#6B7280] mb-0.5">When to change it</div>
-          <div className="text-[13px] text-[#434651] leading-relaxed">{setting.why}</div>
+          <div className="text-[12px] font-bold text-[#6B7A99] mb-0.5">When to change it</div>
+          <div className="text-[13px] text-[#111C2D] leading-relaxed">{setting.why}</div>
         </div>
       )}
 
@@ -46,11 +48,11 @@ const SettingCardView: React.FC<{ setting: HelpSetting }> = ({ setting }) => {
                 <span className="text-[13px] font-bold text-[#111C2D] leading-snug">
                   {field.label}
                 </span>
-                <span className="text-[13px] text-[#434651] leading-relaxed">
+                <span className="text-[13px] text-[#111C2D] leading-relaxed">
                   {field.text}
                 </span>
                 {parts.length > 0 && (
-                  <span className="text-[12px] text-[#6B7280] mt-0.5">
+                  <span className="text-[12px] text-[#6B7A99] mt-0.5">
                     {parts.join('  |  ')}
                   </span>
                 )}
@@ -61,8 +63,8 @@ const SettingCardView: React.FC<{ setting: HelpSetting }> = ({ setting }) => {
       )}
 
       {setting.note && (
-        <div className="flex items-start gap-1.5 text-[12px] text-[#6B7280] leading-relaxed pt-0.5">
-          <Info size={14} className="shrink-0 mt-0.5 text-[#6B7280]" aria-hidden="true" />
+        <div className="flex items-start gap-1.5 text-[12px] text-[#6B7A99] leading-relaxed pt-0.5">
+          <Info size={14} className="shrink-0 mt-0.5 text-[#6B7A99]" aria-hidden="true" />
           <span>{setting.note}</span>
         </div>
       )}
@@ -72,19 +74,19 @@ const SettingCardView: React.FC<{ setting: HelpSetting }> = ({ setting }) => {
 
 const MetricCardView: React.FC<{ metric: HelpMetric }> = ({ metric }) => {
   return (
-    <div className="border border-[#E2E6EF] rounded-lg p-3 bg-[#FAFBFD] flex flex-col gap-2">
+    <div className="border border-[#E2E6EF] rounded-[12px] p-3 bg-[#F5F6F8] flex flex-col gap-2">
       <div className="text-[14px] font-bold text-[#111C2D] leading-snug">
         {metric.name}
       </div>
 
       <div>
-        <div className="text-[12px] font-bold text-[#6B7280] mb-0.5">What it means</div>
-        <div className="text-[13px] text-[#434651] leading-relaxed">{metric.meaning}</div>
+        <div className="text-[12px] font-bold text-[#6B7A99] mb-0.5">What it means</div>
+        <div className="text-[13px] text-[#111C2D] leading-relaxed">{metric.meaning}</div>
       </div>
 
       <div>
-        <div className="text-[12px] font-bold text-[#6B7280] mb-0.5">How it is calculated</div>
-        <div className="text-[13px] text-[#434651] leading-relaxed">{metric.how}</div>
+        <div className="text-[12px] font-bold text-[#6B7A99] mb-0.5">How it is calculated</div>
+        <div className="text-[13px] text-[#111C2D] leading-relaxed">{metric.how}</div>
       </div>
 
       {metric.ratings && metric.ratings.length > 0 && (
@@ -92,15 +94,15 @@ const MetricCardView: React.FC<{ metric: HelpMetric }> = ({ metric }) => {
           {metric.ratings.map((rating, rIdx) => {
             const toneClass =
               rating.tone === 'good'
-                ? 'bg-[#82FAB6]/40 text-[#005230]'
+                ? 'bg-[#25A76B]/15 text-[#25A76B]'
                 : rating.tone === 'warn'
-                ? 'bg-[#FFDDB8] text-[#513100]'
-                : 'bg-[#FFDAD6] text-[#93000A]';
+                ? 'bg-[#F59E0B]/20 text-[#111C2D]'
+                : 'bg-[#EF4444]/15 text-[#EF4444]';
 
             return (
               <span
                 key={rIdx}
-                className={`text-[12px] rounded-lg px-2 py-0.5 font-medium ${toneClass}`}
+                className={`text-[12px] rounded-full px-2.5 py-0.5 font-semibold ${toneClass}`}
               >
                 {rating.label}: {rating.range}
               </span>
@@ -110,7 +112,7 @@ const MetricCardView: React.FC<{ metric: HelpMetric }> = ({ metric }) => {
       )}
 
       {metric.note && (
-        <div className="text-[12px] text-[#6B7280] leading-relaxed pt-0.5">
+        <div className="text-[12px] text-[#6B7A99] leading-relaxed pt-0.5">
           {metric.note}
         </div>
       )}
@@ -136,7 +138,7 @@ const ChipView: React.FC<{ chip: HelpChip }> = ({ chip }) => {
         />
       </svg>
       <span className="font-medium text-[#111C2D]">{chip.label}</span>
-      <span className="text-[#6B7280]">({chip.note})</span>
+      <span className="text-[#6B7A99]">({chip.note})</span>
     </div>
   );
 };
@@ -265,12 +267,12 @@ export const HelpModal: React.FC<HelpModalProps> = ({ open, onClose, tab }) => {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: shouldReduceMotion ? 1 : 0.96 }}
             transition={{ duration: animationDuration, ease: 'easeOut' }}
-            className="bg-white rounded-xl shadow-xl w-full max-w-[640px] max-h-[80vh] flex flex-col border border-[#E2E6EF] overflow-hidden focus:outline-none"
+            className="bg-white rounded-[12px] shadow-xl w-full max-w-[640px] max-h-[80vh] flex flex-col border border-[#E2E6EF] overflow-hidden focus:outline-none"
           >
             {/* Fixed Header */}
-            <header className="px-5 py-4 border-b border-[#E5E7EB] flex items-start justify-between gap-3 bg-white shrink-0">
+            <header className="px-5 py-4 border-b border-[#E2E6EF] flex items-start justify-between gap-3 bg-white shrink-0">
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-[#254B98]/10 text-[#254B98] flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-9 h-9 rounded-lg bg-[#E7EEFF] text-[#254B98] flex items-center justify-center shrink-0 mt-0.5">
                   <CircleHelp size={18} />
                 </div>
                 <div>
@@ -280,14 +282,14 @@ export const HelpModal: React.FC<HelpModalProps> = ({ open, onClose, tab }) => {
                   >
                     {guide.title}
                   </h2>
-                  <p className="text-[12px] text-[#6B7280] mt-0.5">{guide.subtitle}</p>
+                  <p className="text-[12px] text-[#6B7A99] mt-0.5">{guide.subtitle}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={onClose}
                 aria-label="Close help"
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-[#6B7280] hover:text-[#111C2D] hover:bg-[#F5F6F8] transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98]"
+                className="w-9 h-9 rounded-lg flex items-center justify-center text-[#6B7A99] hover:text-[#111C2D] hover:bg-[#F5F6F8] transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98]"
               >
                 <X size={18} />
               </button>
@@ -311,7 +313,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ open, onClose, tab }) => {
                         <h3 className="text-[14px] font-medium text-[#111C2D] leading-snug">
                           {step.heading}
                         </h3>
-                        <p className="text-[13px] text-[#434651] leading-relaxed mt-1">
+                        <p className="text-[13px] text-[#111C2D]/85 leading-relaxed mt-1">
                           {step.body}
                         </p>
                         {step.chips && step.chips.length > 0 && (
@@ -343,7 +345,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ open, onClose, tab }) => {
 
               {/* Good to Know Box */}
               {guide.tips && guide.tips.length > 0 && (
-                <div className="mt-6 p-3.5 bg-[#EEF3FB] border-l-[3px] border-[#254B98] rounded-r-lg">
+                <div className="mt-6 p-3.5 bg-[#E7EEFF] border-l-[3px] border-[#254B98] rounded-r-lg">
                   <h4 className="text-[13px] font-semibold text-[#254B98] mb-1.5">Good to know</h4>
                   <ul className="space-y-1.5 text-[12px] sm:text-[13px] text-[#111C2D] list-disc list-inside">
                     {guide.tips.map((tip, idx) => (
@@ -357,11 +359,12 @@ export const HelpModal: React.FC<HelpModalProps> = ({ open, onClose, tab }) => {
             </div>
 
             {/* Fixed Footer */}
-            <footer className="px-5 py-3.5 border-t border-[#E5E7EB] bg-white flex justify-end shrink-0">
+            <footer className="px-5 py-3.5 border-t border-[#E2E6EF] bg-white flex items-center justify-between gap-3 shrink-0">
+              <span className="text-[12px] text-[#6B7A99]">FlowSmart v{APP_VERSION}</span>
               <button
                 type="button"
                 onClick={onClose}
-                className="h-9 px-4 rounded-lg bg-[#254B98] hover:bg-[#1b366e] text-white text-[13px] font-medium transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1"
+                className="h-9 px-4 rounded-lg bg-[#254B98] hover:bg-[#1c3b78] text-white text-[13px] font-medium transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#254B98] focus-visible:ring-offset-1"
               >
                 Got it
               </button>

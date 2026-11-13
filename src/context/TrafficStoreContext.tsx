@@ -25,11 +25,13 @@ import {
   ActiveTab,
   SimulationStatus,
   RoadSegment,
+  ScenarioId,
 } from '../types/traffic';
 
 import { SAMPLE_MAP, SAMPLE_MAP_SPAWN_RATES } from '../utils/sampleMap';
 import { DEFAULT_METERS_PER_UNIT, clampSpeedKmH, DEFAULT_SPEED_KMH } from '../utils/scale';
 import { migrateDropoffShare, sanitizeDestinationSplits } from '../utils/destinationSplit';
+import { clampDurationMin, detectScenario } from '../utils/scenarios';
 
 const STORAGE_KEY_MAP = 'flowsmart.map';
 const STORAGE_KEY_SETTINGS = 'flowsmart.settings';
@@ -47,6 +49,7 @@ export const DEFAULT_SETTINGS: SimulationSettings = {
   standstillGapMeters: 2.0,
   simDurationMin: 30,
   layoutName: 'Layout A',
+  scenarioId: 'normal',
   dropoffPatienceSec: 30,
   dropoffPatienceSpreadSec: 20,
   dropoffDwellMinSec: 20,
@@ -175,6 +178,7 @@ function getInitialState(): State {
         }
         s.defaultSpeedLimit = clamped;
       }
+      s.simDurationMin = clampDurationMin(s.simDurationMin);
       rawMap.settings = sanitizeDropoffSettings(s as Partial<SimulationSettings>);
     }
 
@@ -204,6 +208,8 @@ function getInitialState(): State {
   }
 
   const rawSettings = loadFromStorage<Record<string, unknown> | null>(STORAGE_KEY_SETTINGS, null);
+  const validScenarioIds = new Set<ScenarioId>(['light', 'normal', 'rush', 'custom']);
+  const entrances = (map.zoneMarkers || []).filter((m) => m.type === 'entrance');
   let settings: SimulationSettings;
   if (rawSettings && typeof rawSettings === 'object') {
     if (rawSettings.metersPerPixel !== undefined) {
@@ -220,9 +226,20 @@ function getInitialState(): State {
       }
       rawSettings.defaultSpeedLimit = clamped;
     }
+    const rawScenarioId = rawSettings.scenarioId;
     settings = sanitizeDropoffSettings({ ...DEFAULT_SETTINGS, ...rawSettings } as SimulationSettings);
+    settings.simDurationMin = clampDurationMin(settings.simDurationMin);
+    if (typeof rawScenarioId === 'string' && validScenarioIds.has(rawScenarioId as ScenarioId)) {
+      settings.scenarioId = rawScenarioId as ScenarioId;
+    } else {
+      settings.scenarioId = detectScenario(settings, entrances);
+    }
   } else {
-    settings = DEFAULT_SETTINGS;
+    settings = {
+      ...DEFAULT_SETTINGS,
+      simDurationMin: clampDurationMin(DEFAULT_SETTINGS.simDurationMin),
+    };
+    settings.scenarioId = detectScenario(settings, entrances);
   }
 
   // Ensure map.settings has metersPerUnit and settings is synced with single field
@@ -236,14 +253,19 @@ function getInitialState(): State {
   }
 
   settings.defaultSpeedLimit = clampSpeedKmH(settings.defaultSpeedLimit);
+  settings.simDurationMin = clampDurationMin(settings.simDurationMin);
   migrateDropoffShare(settings, map);
   settings.destinationSplits = sanitizeDestinationSplits(settings.destinationSplits, map);
 
   if (map.settings) {
     map.settings.defaultSpeedLimit = clampSpeedKmH(map.settings.defaultSpeedLimit);
+    map.settings.simDurationMin = clampDurationMin(map.settings.simDurationMin);
     map.settings = sanitizeDropoffSettings(map.settings);
     migrateDropoffShare(map.settings, map);
     map.settings.destinationSplits = sanitizeDestinationSplits(map.settings.destinationSplits, map);
+    if (!map.settings.scenarioId || !validScenarioIds.has(map.settings.scenarioId)) {
+      map.settings.scenarioId = detectScenario(map.settings, entrances);
+    }
   }
 
   registerCurrentMap(map);
@@ -260,10 +282,19 @@ function getInitialState(): State {
   };
 }
 
+const VALID_ACTIVE_TABS = new Set<ActiveTab>(['map-setup', 'settings', 'simulation', 'results']);
+
+function sanitizeActiveTab(tab: unknown, fallback: ActiveTab = 'simulation'): ActiveTab {
+  if (typeof tab === 'string' && VALID_ACTIVE_TABS.has(tab as ActiveTab)) {
+    return tab as ActiveTab;
+  }
+  return fallback;
+}
+
 function trafficReducer(state: State, action: Action): State {
   switch (action.type) {
     case 'SET_TAB':
-      return { ...state, activeTab: action.payload };
+      return { ...state, activeTab: sanitizeActiveTab(action.payload, state.activeTab) };
 
     case 'SET_SIM_STATUS':
       if (state.simulationStatus === action.payload) return state;
@@ -283,7 +314,15 @@ function trafficReducer(state: State, action: Action): State {
       if (sanitized.destinationSplits !== undefined) {
         sanitized.destinationSplits = sanitizeDestinationSplits(sanitized.destinationSplits, state.map);
       }
+      if (sanitized.simDurationMin !== undefined) {
+        sanitized.simDurationMin = clampDurationMin(sanitized.simDurationMin);
+      }
       const newSettings = sanitizeDropoffSettings({ ...state.settings, ...sanitized });
+      newSettings.simDurationMin = clampDurationMin(newSettings.simDurationMin);
+      if (sanitized.spawnRates !== undefined || sanitized.stickerShare !== undefined) {
+        const entrances = (state.map.zoneMarkers || []).filter((m) => m.type === 'entrance');
+        newSettings.scenarioId = detectScenario(newSettings, entrances);
+      }
       const updatedMap = {
         ...state.map,
         settings: {
@@ -314,6 +353,7 @@ function trafficReducer(state: State, action: Action): State {
         ...state.settings,
         ...(cleanMap.settings || {}),
         defaultSpeedLimit: clampSpeedKmH(cleanMap.settings?.defaultSpeedLimit ?? state.settings.defaultSpeedLimit),
+        simDurationMin: clampDurationMin(cleanMap.settings?.simDurationMin ?? state.settings.simDurationMin),
         metersPerUnit: newMeters,
       };
       migrateDropoffShare(syncedSettings, cleanMap);
@@ -321,6 +361,10 @@ function trafficReducer(state: State, action: Action): State {
         cleanMap.settings?.destinationSplits ?? state.settings.destinationSplits,
         cleanMap
       );
+      if (cleanMap.settings?.scenarioId === undefined) {
+        const entrances = (cleanMap.zoneMarkers || []).filter((m) => m.type === 'entrance');
+        syncedSettings.scenarioId = detectScenario(syncedSettings, entrances);
+      }
       const finalSettings = sanitizeDropoffSettings(syncedSettings);
       cleanMap.settings = finalSettings;
       return { ...state, map: cleanMap, settings: finalSettings };
@@ -329,17 +373,21 @@ function trafficReducer(state: State, action: Action): State {
     case 'SET_REFERENCE_IMAGE_URL':
       return { ...state, referenceImageUrl: action.payload };
 
-    case 'LOAD_SAMPLE_MAP':
+    case 'LOAD_SAMPLE_MAP': {
+      const entrances = (SAMPLE_MAP.zoneMarkers || []).filter((m) => m.type === 'entrance');
+      const nextSettings: SimulationSettings = {
+        ...state.settings,
+        spawnRates: { ...SAMPLE_MAP_SPAWN_RATES },
+        destinationSplits: {},
+      };
+      nextSettings.scenarioId = detectScenario(nextSettings, entrances);
       return {
         ...state,
         map: SAMPLE_MAP,
         selectedSegmentId: null,
-        settings: {
-          ...state.settings,
-          spawnRates: { ...SAMPLE_MAP_SPAWN_RATES },
-          destinationSplits: {},
-        },
+        settings: nextSettings,
       };
+    }
 
     case 'ADD_RUN_LOG': {
       const updatedLog = [action.payload, ...state.runLog];

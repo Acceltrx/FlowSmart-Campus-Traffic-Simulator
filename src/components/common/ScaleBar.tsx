@@ -18,7 +18,7 @@ export const ScaleBar: React.FC<ScaleBarProps> = ({
     <div
       className={`bg-white/95 backdrop-blur px-2.5 py-1.5 rounded-lg border border-[#E2E6EF] shadow-sm flex flex-col items-start gap-1 w-fit select-none ${className}`}
     >
-      <span className="text-[11px] font-semibold text-[#111C2D] leading-none tabular-nums">
+      <span className="text-[12px] font-semibold text-[#111C2D] leading-none tabular-nums">
         {data.label}
       </span>
       <div

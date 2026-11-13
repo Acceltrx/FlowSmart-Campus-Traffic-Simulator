@@ -23,7 +23,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Point, RoadSegment, ZoneMarker, MapConfig } from '../types/traffic';
+import { Point, RoadSegment, MapConfig } from '../types/traffic';
 import {
   SnapTarget,
   findSnapTarget,
@@ -78,7 +78,6 @@ export function useWireTool({
   defaultSpeedLimit,
   worldWidth,
   worldHeight,
-  selectedRoadId,
   setSelectedRoadId,
   setSelectedMarkerId,
 }: UseWireToolParams) {

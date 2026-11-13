@@ -9,10 +9,10 @@ import { TrafficStoreProvider, useTrafficStore } from './context/TrafficStoreCon
 import { SimulationProvider, useSimulation } from './context/SimulationContext';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { TopNav } from './components/layout/TopNav';
-import { LeftSidebar } from './components/layout/LeftSidebar';
 import { RightPanel } from './components/layout/RightPanel';
 import { SimulationCanvas } from './components/canvas/SimulationCanvas';
 import { MapSetupView } from './components/map-setup/MapSetupView';
+import { SettingsView } from './components/views/SettingsView';
 import { ResultsView } from './components/views/ResultsView';
 
 const WorkspaceShell: React.FC = () => {
@@ -36,7 +36,7 @@ const WorkspaceShell: React.FC = () => {
             <button
               type="button"
               onClick={dismissStorageWarning}
-              className="text-[#92400E] hover:text-[#78350F] p-1 rounded hover:bg-amber-100 transition-colors cursor-pointer"
+              className="text-[#92400E] hover:text-[#78350F] w-9 h-9 flex items-center justify-center rounded hover:bg-amber-100 transition-colors cursor-pointer shrink-0"
               aria-label="Dismiss banner"
             >
               <X size={14} />
@@ -46,17 +46,14 @@ const WorkspaceShell: React.FC = () => {
 
         <div className="flex-1 flex w-full overflow-hidden">
           {state.activeTab === 'simulation' && (
-            <div className="flex flex-row w-full h-full overflow-hidden">
-              {/* 160px Left Sidebar */}
-              <LeftSidebar />
-
-              {/* Fluid Center Simulation Canvas */}
+            <div className="relative w-full h-full overflow-hidden">
+              {/* Full-bleed Simulation Canvas */}
               <SimulationCanvas
                 showHeatmap={showHeatmap}
                 onToggleHeatmap={setShowHeatmap}
               />
 
-              {/* 210px Right Panel */}
+              {/* Floating Top-Right Telemetry Card */}
               <RightPanel
                 showHeatmap={showHeatmap}
                 onToggleHeatmap={setShowHeatmap}
@@ -65,6 +62,8 @@ const WorkspaceShell: React.FC = () => {
           )}
 
           {state.activeTab === 'map-setup' && <MapSetupView />}
+
+          {state.activeTab === 'settings' && <SettingsView />}
 
           {state.activeTab === 'results' && <ResultsView />}
         </div>
