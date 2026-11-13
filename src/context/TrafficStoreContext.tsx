@@ -274,7 +274,7 @@ function getInitialState(): State {
     map,
     settings,
     runLog: loadFromStorage<RunLogEntry[]>(STORAGE_KEY_RUNLOG, []),
-    activeTab: 'simulation',
+    activeTab: 'map-setup',
     simulationStatus: 'idle',
     selectedSegmentId: null,
     simSpeed: 1,
@@ -284,7 +284,7 @@ function getInitialState(): State {
 
 const VALID_ACTIVE_TABS = new Set<ActiveTab>(['map-setup', 'settings', 'simulation', 'results']);
 
-function sanitizeActiveTab(tab: unknown, fallback: ActiveTab = 'simulation'): ActiveTab {
+function sanitizeActiveTab(tab: unknown, fallback: ActiveTab = 'map-setup'): ActiveTab {
   if (typeof tab === 'string' && VALID_ACTIVE_TABS.has(tab as ActiveTab)) {
     return tab as ActiveTab;
   }
